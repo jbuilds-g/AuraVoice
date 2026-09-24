@@ -433,7 +433,7 @@ class GeminiApiClient {
         return result.exceptionOrNull() is NoSpeechDetectedException
     }
 
-$helperAnchor
+    private fun extractErrorMessage(bodyString: String, statusCode: Int): String {
         return try {
             val json = JSONObject(bodyString)
             val errorObj = json.optJSONObject("error")
