@@ -20,12 +20,10 @@ class GeminiApiClient {
 
     companion object {
         private const val TAG = "GeminiApiClient"
-        private const val PRIMARY_TRANSCRIBE_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-transcribe:generateContent"
-        private const val FALLBACK_TRANSCRIBE_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent"
-        private const val SECONDARY_FALLBACK_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
-        private const val MINIMAL_VERIFICATION_AUDIO_BASE64 = "AAAAHGZ0eXBtcDQyAAAAAW1wNDJtcDQxaXNvbQAAAAxtb292AAAAbG12aGQAAAAAAAAAAAAAAAAAAAPoAAAA" +
-                "AAABAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAA" +
-                "QAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        private const val API_BASE = "https://generativelanguage.googleapis.com/v1beta"
+        private const val MODELS_ENDPOINT = "$API_BASE/models"
+        private const val DEFAULT_MODEL = "gemini-3.8-flash"
+        private const val MODEL_CACHE_MS = 6 * 60 * 60 * 1000L
     }
 
     private val client = OkHttpClient.Builder()
@@ -33,6 +31,9 @@ class GeminiApiClient {
         .readTimeout(45, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
         .build()
+
+    @Volatile private var cachedModel: String? = null
+    @Volatile private var modelCacheTimestamp = 0L
 
     suspend fun transcribeAudio(context: Context, audioFile: File, mode: String = "smart"): Result<String> {
         val apiKey = SecurePreferences(context).getApiKey()
@@ -48,158 +49,86 @@ class GeminiApiClient {
 
         DiagnosticLog.add("Transcription started (mode: ${mode.lowercase()})")
         try {
+            val model = discoverLatestFlashModel(apiKey)
+            DiagnosticLog.add("Using Gemini model: $model")
+
             val base64Audio = Base64.encodeToString(audioFile.readBytes(), Base64.NO_WRAP)
-            val primaryResult = executePrimaryTranscribeRequest(apiKey, base64Audio, mode)
+            val result = executeMultimodalRequest(model, apiKey, base64Audio, mode)
 
-            if (primaryResult.isSuccess) {
-                val text = primaryResult.getOrNull() ?: ""
+            if (result.isSuccess) {
+                val text = result.getOrNull()?.trim().orEmpty()
                 if (text.isNotBlank()) {
-                    DiagnosticLog.add("Primary model succeeded: gemini-3.5-transcribe")
+                    DiagnosticLog.add("Transcription succeeded: $model")
                     return@withContext Result.success(text)
                 }
             }
 
-            val primaryError = primaryResult.exceptionOrNull()
-            if (primaryError is QuotaExceededException) {
-                QuotaCooldownController.start(primaryError.retryAfterSeconds)
-                DiagnosticLog.add("Quota cooldown started: ${primaryError.retryAfterSeconds}s")
-                return@withContext Result.failure(primaryError)
-            }
-
-            DiagnosticLog.add("Primary model failed: ${(primaryError?.message ?: "empty output").take(120)}")
-
-            val fallbackResult = executeMultimodalFallback(FALLBACK_TRANSCRIBE_ENDPOINT, apiKey, base64Audio, mode)
-            if (fallbackResult.isSuccess) {
-                val text = fallbackResult.getOrNull() ?: ""
-                if (text.isNotBlank()) {
-                    DiagnosticLog.add("Fallback succeeded: gemini-3.8-flash")
-                    return@withContext Result.success(text)
+            val error = result.exceptionOrNull()
+            when (error) {
+                is QuotaExceededException -> {
+                    QuotaCooldownController.start(error.retryAfterSeconds)
+                    DiagnosticLog.add("Quota cooldown started: ${error.retryAfterSeconds}s")
+                }
+                is NoSpeechDetectedException -> {
+                    DiagnosticLog.add("No speech detected by $model")
+                }
+                else -> {
+                    DiagnosticLog.add("Transcription failed: ${(error?.message ?: "empty output").take(120)}")
                 }
             }
 
-            val fallbackError = fallbackResult.exceptionOrNull()
-            if (fallbackError is QuotaExceededException) {
-                QuotaCooldownController.start(fallbackError.retryAfterSeconds)
-                DiagnosticLog.add("Quota cooldown started: ${fallbackError.retryAfterSeconds}s")
-                return@withContext Result.failure(fallbackError)
-            }
-            DiagnosticLog.add("Fallback failed: ${(fallbackError?.message ?: "empty output").take(120)}")
-
-            val secondaryResult = executeMultimodalFallback(SECONDARY_FALLBACK_ENDPOINT, apiKey, base64Audio, mode)
-            if (secondaryResult.isSuccess) {
-                val text = secondaryResult.getOrNull() ?: ""
-                if (text.isNotBlank()) {
-                    DiagnosticLog.add("Secondary fallback succeeded: gemini-2.5-flash")
-                    return@withContext Result.success(text)
-                }
-            }
-
-            val secondaryError = secondaryResult.exceptionOrNull()
-            if (secondaryError is QuotaExceededException) {
-                QuotaCooldownController.start(secondaryError.retryAfterSeconds)
-                DiagnosticLog.add("Quota cooldown started: ${secondaryError.retryAfterSeconds}s")
-                return@withContext Result.failure(secondaryError)
-            }
-            DiagnosticLog.add("Secondary fallback failed: ${(secondaryError?.message ?: "empty output").take(120)}")
-
-            val allAttemptsFoundNoSpeech = isNoSpeechDetected(primaryResult) &&
-                    isNoSpeechDetected(fallbackResult) &&
-                    isNoSpeechDetected(secondaryResult)
-            if (allAttemptsFoundNoSpeech) {
-                DiagnosticLog.add("No speech detected across all transcription attempts")
-                return@withContext Result.failure(NoSpeechDetectedException())
-            }
-
-            val finalError = listOf(primaryResult, fallbackResult, secondaryResult)
-                .mapNotNull { it.exceptionOrNull() }
-                .firstOrNull { it !is NoSpeechDetectedException }
-                ?.message ?: "Transcription failed."
-            DiagnosticLog.add("Transcription failed: ${finalError.take(120)}")
-            Result.failure(Exception(finalError))
+            Result.failure(error ?: Exception("Transcription failed."))
         } catch (e: Exception) {
-            Log.e(TAG, "Transcribe audio request failed with exception", e)
+            Log.e(TAG, "Transcribe audio request failed", e)
             DiagnosticLog.add("Transcription exception: ${e.message?.take(120) ?: "unknown error"}")
             Result.failure(e)
         }
     }
 
-    private fun executePrimaryTranscribeRequest(apiKey: String, base64Audio: String, mode: String): Result<String> {
-        return try {
-            val jsonBody = JSONObject().apply {
-                val contents = JSONArray()
-                val contentObj = JSONObject()
-                val parts = JSONArray()
-                parts.put(JSONObject().apply {
-                    put("inline_data", JSONObject().apply {
-                        put("mime_type", "audio/mp4")
-                        put("data", base64Audio)
-                    })
-                })
-                contentObj.put("parts", parts)
-                contents.put(contentObj)
-                put("contents", contents)
-                val modeType = if (mode.equals("verbatim", ignoreCase = true)) "VERBATIM" else "SMART"
-                put("generationConfig", JSONObject().apply {
-                    put("audioTranscriptionConfig", JSONObject().apply { put("mode", modeType) })
-                })
-            }
-            val request = Request.Builder()
-                .url("$PRIMARY_TRANSCRIBE_ENDPOINT?key=$apiKey")
-                .post(jsonBody.toString().toRequestBody("application/json".toMediaType()))
-                .build()
-            client.newCall(request).execute().use { response ->
-                val bodyString = response.body?.string() ?: ""
-                Log.d(TAG, "Primary response code: ${response.code}, body: ${bodyString.take(300)}")
-                if (!response.isSuccessful) return Result.failure(buildRequestException(bodyString, response.code, response.header("Retry-After")))
-                parseCandidatesText(bodyString)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error executing primary transcribe request", e)
-            Result.failure(e)
-        }
-    }
-
-    private fun executeMultimodalFallback(endpoint: String, apiKey: String, base64Audio: String, mode: String): Result<String> {
+    private fun executeMultimodalRequest(model: String, apiKey: String, base64Audio: String, mode: String): Result<String> {
         return try {
             val promptText = if (mode.equals("verbatim", ignoreCase = true)) {
-                "Transcribe this audio file word-for-word exactly as spoken. Preserve filler words, repetitions, false starts, and the speaker's wording. " +
-                        "If the audio contains no intelligible speech, return an empty response and nothing else. " +
-                        "Do not clean up, summarize, paraphrase, infer missing words, or add commentary. Output ONLY the transcript."
+                "Transcribe this audio exactly as spoken. Preserve filler words, repetitions, false starts, and the speaker's wording. " +
+                        "Do not clean up, summarize, paraphrase, infer missing words, or add commentary. " +
+                        "If there is no intelligible speech, return an empty response. Output ONLY the transcript."
             } else {
-                "You are a voice dictation transcription engine. Listen to the audio and transcribe the user's spoken words into clean, ready-to-use text. " +
+                "You are a voice dictation transcription engine. Listen carefully to the audio and convert the user's speech into clean, ready-to-use text. " +
                         "Remove filler words, stutters, and obvious false starts. Resolve spoken self-corrections while preserving the user's final intended wording. " +
-                        "Preserve names, technical terms, URLs, email addresses, and other meaningful details. Apply natural punctuation, capitalization, " +
-                        "and formatting when clearly indicated by the speech. Do not summarize, paraphrase, invent, or describe the audio. " +
-                        "If the audio contains no intelligible speech, return an empty response and nothing else. " +
-                        "Output ONLY the final dictated text. Do NOT add a preamble, explanation, commentary, or markdown wrapper."
+                        "Fix grammar, punctuation, capitalization, sentence structure, and obvious transcription mistakes. " +
+                        "Preserve names, technical terms, URLs, email addresses, numbers, and other meaningful details exactly when they are clearly spoken. " +
+                        "Do not summarize, paraphrase, invent, explain, or describe the audio. Do not add information. " +
+                        "If there is no intelligible speech, return an empty response. Output ONLY the final dictated text."
             }
-            val jsonBody = JSONObject().apply {
-                val contents = JSONArray()
-                val contentObj = JSONObject()
-                val parts = JSONArray()
-                parts.put(JSONObject().apply {
+
+            val parts = JSONArray().apply {
+                put(JSONObject().apply {
                     put("inline_data", JSONObject().apply {
                         put("mime_type", "audio/mp4")
                         put("data", base64Audio)
                     })
                 })
-                parts.put(JSONObject().apply { put("text", promptText) })
-                contentObj.put("parts", parts)
-                contents.put(contentObj)
-                put("contents", contents)
+                put(JSONObject().apply { put("text", promptText) })
             }
+            val contents = JSONArray().apply {
+                put(JSONObject().apply { put("parts", parts) })
+            }
+            val jsonBody = JSONObject().apply { put("contents", contents) }
+
             val request = Request.Builder()
-                .url("$endpoint?key=$apiKey")
+                .url("$API_BASE/models/$model:generateContent?key=$apiKey")
                 .post(jsonBody.toString().toRequestBody("application/json".toMediaType()))
                 .build()
+
             client.newCall(request).execute().use { response ->
                 val bodyString = response.body?.string() ?: ""
-                Log.d(TAG, "Fallback response code: ${response.code}, body: ${bodyString.take(300)}")
-                if (!response.isSuccessful) return Result.failure(buildRequestException(bodyString, response.code, response.header("Retry-After")))
+                Log.d(TAG, "Gemini $model response code: ${response.code}, body: ${bodyString.take(300)}")
+                if (!response.isSuccessful) {
+                    return Result.failure(buildRequestException(bodyString, response.code, response.header("Retry-After")))
+                }
                 parseCandidatesText(bodyString)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error executing fallback request", e)
+            Log.e(TAG, "Error executing Gemini multimodal request", e)
             Result.failure(e)
         }
     }
@@ -212,6 +141,7 @@ class GeminiApiClient {
             if (!blockReason.isNullOrBlank() && blockReason != "BLOCK_REASON_UNSPECIFIED") {
                 return Result.failure(Exception("Audio prompt was blocked by safety filters ($blockReason)"))
             }
+
             val candidates = responseJson.optJSONArray("candidates")
             if (candidates != null && candidates.length() > 0) {
                 val firstCandidate = candidates.getJSONObject(0)
@@ -219,7 +149,7 @@ class GeminiApiClient {
                     return Result.failure(Exception("Transcription blocked by safety filters."))
                 }
                 val resParts = firstCandidate.optJSONObject("content")?.optJSONArray("parts")
-                if (resParts != null && resParts.length() > 0) {
+                if (resParts != null) {
                     val sb = StringBuilder()
                     for (i in 0 until resParts.length()) {
                         val text = resParts.getJSONObject(i).optString("text", "")
@@ -229,6 +159,7 @@ class GeminiApiClient {
                     if (finalResult.isNotBlank()) return Result.success(finalResult)
                 }
             }
+
             val directText = responseJson.optString("text", "").trim()
             if (directText.isNotBlank()) return Result.success(directText)
             Result.failure(NoSpeechDetectedException())
@@ -237,73 +168,96 @@ class GeminiApiClient {
         }
     }
 
+    private fun discoverLatestFlashModel(apiKey: String): String {
+        val now = System.currentTimeMillis()
+        val cached = cachedModel
+        if (cached != null && now - modelCacheTimestamp < MODEL_CACHE_MS) return cached
+
+        return try {
+            val request = Request.Builder()
+                .url("$MODELS_ENDPOINT?key=$apiKey")
+                .get()
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                val bodyString = response.body?.string() ?: ""
+                if (!response.isSuccessful) {
+                    Log.w(TAG, "Models API returned ${response.code}; using cached/default model")
+                    return@use cached ?: DEFAULT_MODEL
+                }
+
+                val models = JSONObject(bodyString).optJSONArray("models") ?: JSONArray()
+                val candidates = mutableListOf<String>()
+                for (i in 0 until models.length()) {
+                    val model = models.optJSONObject(i) ?: continue
+                    val name = model.optString("name").removePrefix("models/")
+                    val methods = model.optJSONArray("supportedGenerationMethods")
+                    val supportsGenerateContent = methods?.let { array ->
+                        (0 until array.length()).any { array.optString(it) == "generateContent" }
+                    } == true
+                    if (supportsGenerateContent && isStableFlashModel(name)) candidates += name
+                }
+
+                val selected = candidates.maxWithOrNull(
+                    compareBy<String> { flashModelVersion(it) }.thenBy { it }
+                ) ?: DEFAULT_MODEL
+                cachedModel = selected
+                modelCacheTimestamp = now
+                Log.i(TAG, "Latest stable Flash model selected: $selected")
+                selected
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to discover Gemini models; using ${cached ?: DEFAULT_MODEL}", e)
+            cached ?: DEFAULT_MODEL
+        }
+    }
+
+    private fun isStableFlashModel(name: String): Boolean {
+        val normalized = name.lowercase()
+        if (!normalized.matches(Regex("gemini-\\d+(?:\\.\\d+)*-flash(?:-lite)?"))) return false
+        if (normalized.contains("preview") || normalized.contains("exp")) return false
+        return true
+    }
+
+    private fun flashModelVersion(name: String): Long {
+        val match = Regex("gemini-(\\d+)(?:\\.(\\d+))?-flash").find(name.lowercase()) ?: return 0L
+        val major = match.groupValues[1].toLongOrNull() ?: 0L
+        val minor = match.groupValues[2].toLongOrNull() ?: 0L
+        return major * 1000L + minor
+    }
+
     suspend fun testApiKey(apiKey: String): Result<Boolean> = withContext(Dispatchers.IO) {
         val trimmedKey = apiKey.trim()
         if (trimmedKey.isBlank()) throw IllegalStateException("No API key configured.")
         try {
-            val jsonBody = JSONObject().apply {
-                val contents = JSONArray()
-                val contentObj = JSONObject()
-                val parts = JSONArray()
-                parts.put(JSONObject().apply {
-                    put("inline_data", JSONObject().apply {
-                        put("mime_type", "audio/mp4")
-                        put("data", MINIMAL_VERIFICATION_AUDIO_BASE64)
-                    })
-                })
-                contentObj.put("parts", parts)
-                contents.put(contentObj)
-                put("contents", contents)
-                put("generationConfig", JSONObject().apply {
-                    put("audioTranscriptionConfig", JSONObject().apply { put("mode", "SMART") })
-                })
-            }
             val request = Request.Builder()
-                .url("$PRIMARY_TRANSCRIBE_ENDPOINT?key=$trimmedKey")
-                .post(jsonBody.toString().toRequestBody("application/json".toMediaType()))
+                .url("$MODELS_ENDPOINT?key=$trimmedKey")
+                .get()
                 .build()
             client.newCall(request).execute().use { response ->
                 val bodyString = response.body?.string() ?: ""
-                if (response.isSuccessful) return@withContext Result.success(true)
+                if (response.isSuccessful) {
+                    val models = JSONObject(bodyString).optJSONArray("models")
+                    val hasFlash = models != null && (0 until models.length()).any { i ->
+                        val model = models.optJSONObject(i) ?: return@any false
+                        val name = model.optString("name").removePrefix("models/")
+                        isStableFlashModel(name)
+                    }
+                    if (hasFlash) return@withContext Result.success(true)
+                    return@withContext Result.failure(Exception("API key is valid, but no compatible Gemini Flash model is available."))
+                }
                 val isKeyInvalid = response.code == 403 || (response.code == 400 && (
                         bodyString.contains("API_KEY_INVALID", ignoreCase = true) ||
                                 bodyString.contains("API key not valid", ignoreCase = true) ||
                                 bodyString.contains("API_KEY", ignoreCase = true)
                         ))
                 if (isKeyInvalid) return@withContext Result.failure(Exception("API Key Invalid: ${extractErrorMessage(bodyString, response.code)}"))
-                if (response.code == 400) return@withContext Result.success(true)
-                if (response.code == 404) return@withContext testKeyWithFallback(trimmedKey)
                 Result.failure(Exception("Validation failed (${response.code}): ${extractErrorMessage(bodyString, response.code)}"))
             }
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
-
-    private fun testKeyWithFallback(apiKey: String): Result<Boolean> {
-        return try {
-            val jsonBody = JSONObject().apply {
-                val contents = JSONArray()
-                val contentObj = JSONObject()
-                val parts = JSONArray().apply { put(JSONObject().apply { put("text", "ping") }) }
-                contentObj.put("parts", parts)
-                contents.put(contentObj)
-                put("contents", contents)
-            }
-            val request = Request.Builder()
-                .url("$FALLBACK_TRANSCRIBE_ENDPOINT?key=$apiKey")
-                .post(jsonBody.toString().toRequestBody("application/json".toMediaType()))
-                .build()
-            client.newCall(request).execute().use { response ->
-                if (response.isSuccessful || response.code == 200) Result.success(true)
-                else Result.failure(Exception(extractErrorMessage(response.body?.string() ?: "", response.code)))
-            }
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
-
-    private fun isNoSpeechDetected(result: Result<String>): Boolean = result.exceptionOrNull() is NoSpeechDetectedException
 
     private fun buildRequestException(bodyString: String, statusCode: Int, retryAfterHeader: String?): Exception {
         if (statusCode == 429) {
