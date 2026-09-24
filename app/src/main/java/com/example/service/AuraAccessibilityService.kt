@@ -131,7 +131,23 @@ class AuraAccessibilityService : AccessibilityService() {
             ?: findFirstEditableNode(root)
 
         if (targetNode != null) {
-            val existingText = targetNode.text?.toString() ?: ""
+            val rawExistingText = targetNode.text?.toString() ?: ""
+            val hintText = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                targetNode.hintText?.toString()
+            } else {
+                null
+            }
+            val existingText = when {
+                rawExistingText.isBlank() -> ""
+                android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O &&
+                        targetNode.isShowingHintText -> ""
+                !hintText.isNullOrBlank() && rawExistingText == hintText -> ""
+                else -> rawExistingText
+            }
+
+            if (rawExistingText.isNotBlank() && existingText.isBlank()) {
+                Log.d(TAG, "Ignoring placeholder/hint text during dictation injection: \"$rawExistingText\"")
+            }
 
             val combinedText = if (existingText.isNotBlank()) {
                 if (existingText.endsWith(" ") || existingText.endsWith("\n")) {
