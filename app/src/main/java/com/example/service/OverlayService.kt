@@ -625,18 +625,29 @@ class OverlayService : Service() {
         if (result.isSuccess) {
             val text = (result.getOrNull() ?: "").trim()
             if (text.isBlank()) {
-                Log.w(TAG, "Transcription returned empty string")
-                retryFile = file
-                _canRetry.value = true
+                Log.w(TAG, "Transcription returned empty string; treating as no speech detected.")
+                try {
+                    file.delete()
+                } catch (ignored: Exception) {
+                }
+                retryFile = null
+                _canRetry.value = false
                 withContext(Dispatchers.Main) {
                     Toast.makeText(
                         this@OverlayService,
-                        "AuraVoice: No speech detected in recording. Tap retry to try again.",
+                        "No speech detected. Tap the mic and try again.",
                         Toast.LENGTH_LONG
                     ).show()
                 }
                 _overlayState.value = OverlayState.ERROR
                 applyVisibilityRules()
+                serviceScope.launch {
+                    delay(1800)
+                    if (_overlayState.value == OverlayState.ERROR && !_canRetry.value) {
+                        _overlayState.value = OverlayState.IDLE
+                        applyVisibilityRules()
+                    }
+                }
                 return
             }
 
@@ -671,7 +682,39 @@ class OverlayService : Service() {
             applyVisibilityRules()
 
         } else {
-            val errorMsg = result.exceptionOrNull()?.message ?: "Transcription failed"
+            val exception = result.exceptionOrNull()
+            val errorMsg = exception?.message ?: "Transcription failed"
+
+            if (exception is GeminiApiClient.NoSpeechDetectedException) {
+                Log.i(TAG, "No speech detected; keeping retry action disabled because there is no recording to retry.")
+                try {
+                    file.delete()
+                } catch (ignored: Exception) {
+                }
+                retryFile = null
+                _canRetry.value = false
+
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        this@OverlayService,
+                        "No speech detected. Tap the mic and try again.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+
+                _overlayState.value = OverlayState.ERROR
+                applyVisibilityRules()
+
+                serviceScope.launch {
+                    delay(1800)
+                    if (_overlayState.value == OverlayState.ERROR && !_canRetry.value) {
+                        _overlayState.value = OverlayState.IDLE
+                        applyVisibilityRules()
+                    }
+                }
+                return
+            }
+
             Log.e(TAG, "Transcription error: $errorMsg")
             retryFile = file
             _canRetry.value = true
