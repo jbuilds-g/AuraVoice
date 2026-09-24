@@ -201,12 +201,14 @@ class GeminiApiClient {
 
             val promptText = if (mode.equals("verbatim", ignoreCase = true)) {
                 "Transcribe this audio file word-for-word exactly as spoken. Preserve filler words, repetitions, false starts, and the speaker's wording. " +
+                "If the audio contains no intelligible speech, return an empty response and nothing else. " +
                 "Do not clean up, summarize, paraphrase, infer missing words, or add commentary. Output ONLY the transcript."
             } else {
                 "You are a voice dictation transcription engine. Listen to the audio and transcribe the user's spoken words into clean, ready-to-use text. " +
                 "Remove filler words, stutters, and obvious false starts. Resolve spoken self-corrections while preserving the user's final intended wording. " +
                 "Preserve names, technical terms, URLs, email addresses, and other meaningful details. Apply natural punctuation, capitalization, " +
                 "and formatting when clearly indicated by the speech. Do not summarize, paraphrase, invent, or describe the audio. " +
+                "If the audio contains no intelligible speech, return an empty response and nothing else. " +
                 "Output ONLY the final dictated text. Do NOT add a preamble, explanation, commentary, or markdown wrapper."
             }
 
