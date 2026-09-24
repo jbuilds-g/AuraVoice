@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">AuraVoice</string>
+    <string name="accessibility_service_description">AuraVoice Accessibility Service detects active focused input fields to intelligently inject and append AI-transcribed speech across apps.</string>
+</resources>

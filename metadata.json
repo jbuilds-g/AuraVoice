@@ -1,0 +1,6 @@
+{
+  "name": "AuraVoice",
+  "description": "System-wide AI dictation tool that captures audio, formats it with gemini-3.5-transcribe, and smart-appends into active fields or clipboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
