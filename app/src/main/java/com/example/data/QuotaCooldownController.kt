@@ -19,7 +19,6 @@ object QuotaCooldownController {
     fun start(seconds: Long) {
         val duration = seconds.coerceIn(1L, 60L)
         cooldownJob?.cancel()
-        QuotaCooldownOverlay.show()
         cooldownJob = scope.launch {
             val endAt = SystemClock.elapsedRealtime() + duration * 1000L
             while (true) {
@@ -29,7 +28,6 @@ object QuotaCooldownController {
                 delay(minOf(1000L, remaining))
             }
             _remainingSeconds.value = 0
-            QuotaCooldownOverlay.remove()
         }
     }
 }
