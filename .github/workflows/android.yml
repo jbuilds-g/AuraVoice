@@ -74,11 +74,29 @@ jobs:
             cp "$apk" "artifacts/AuraVoice-$abi.apk"
           done
           ls -lh artifacts/
-      - name: Upload release APKs
+      - name: Upload arm64-v8a APK
         uses: actions/upload-artifact@v7
         with:
-          name: AuraVoice-release-apks
-          path: artifacts/*.apk
+          name: AuraVoice-arm64-v8a
+          path: artifacts/AuraVoice-arm64-v8a.apk
+          if-no-files-found: error
+      - name: Upload armeabi-v7a APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: AuraVoice-armeabi-v7a
+          path: artifacts/AuraVoice-armeabi-v7a.apk
+          if-no-files-found: error
+      - name: Upload x86_64 APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: AuraVoice-x86_64
+          path: artifacts/AuraVoice-x86_64.apk
+          if-no-files-found: error
+      - name: Upload universal APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: AuraVoice-universal
+          path: artifacts/AuraVoice-universal.apk
           if-no-files-found: error
       - name: Remove temporary keystore
         if: always()
