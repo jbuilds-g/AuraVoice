@@ -135,6 +135,7 @@ class MainActivity : ComponentActivity() {
                         onSandboxTextChange = { viewModel.updateSandboxText(it) },
                         onClearSandboxText = { viewModel.clearSandboxText() },
                         onCopySandboxText = { viewModel.copySandboxText() },
+                        onDismissSandboxError = { viewModel.clearErrorMessage() },
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(innerPadding)
@@ -165,6 +166,7 @@ fun MainScreenContent(
     onSandboxTextChange: (String) -> Unit,
     onClearSandboxText: () -> Unit,
     onCopySandboxText: () -> Unit,
+    onDismissSandboxError: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
@@ -271,7 +273,10 @@ fun MainScreenContent(
                 onStartRecording = onStartSandboxRecording,
                 onStopRecording = onStopSandboxRecording,
                 onClearText = onClearSandboxText,
-                onCopyText = onCopySandboxText
+                onCopyText = onCopySandboxText,
+                lastErrorMessage = uiState.lastErrorMessage,
+                lastAudioInfo = uiState.lastAudioInfo,
+                onDismissError = onDismissSandboxError
             )
 
             // 7. How It Works Quick Architecture Guide
