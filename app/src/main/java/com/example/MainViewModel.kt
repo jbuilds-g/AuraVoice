@@ -40,6 +40,8 @@ data class MainUiState(
     val isSandboxProcessing: Boolean = false,
     val sandboxRecordingSeconds: Int = 0,
     val sandboxTranscribedText: String = "",
+    val lastErrorMessage: String? = null,
+    val lastAudioInfo: String? = null,
     val feedbackMessage: String? = null
 )
 
@@ -177,7 +179,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun startSandboxRecording() {
         val key = securePreferences.getApiKey()
         if (key.isBlank()) {
-            _uiState.update { it.copy(feedbackMessage = "Please configure your Gemini API Key in settings.") }
+            _uiState.update {
+                it.copy(
+                    lastErrorMessage = "Please enter and save your Google AI Studio API key first.",
+                    feedbackMessage = "Please configure your Gemini API Key in settings."
+                )
+            }
             return
         }
 
@@ -188,6 +195,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 it.copy(
                     isSandboxRecording = true,
                     sandboxRecordingSeconds = 0,
+                    lastErrorMessage = null,
+                    lastAudioInfo = null,
                     feedbackMessage = null
                 )
             }
@@ -199,7 +208,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         } else {
-            _uiState.update { it.copy(feedbackMessage = "Microphone error: ${res.exceptionOrNull()?.message}") }
+            val err = res.exceptionOrNull()?.message ?: "Microphone error"
+            _uiState.update {
+                it.copy(
+                    lastErrorMessage = "Microphone error: $err",
+                    feedbackMessage = "Microphone error: $err"
+                )
+            }
         }
     }
 
@@ -208,18 +223,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val file = audioCaptureEngine.stopRecording()
         _uiState.update { it.copy(isSandboxRecording = false, isSandboxProcessing = true) }
 
-        if (file == null) {
-            _uiState.update { it.copy(isSandboxProcessing = false, feedbackMessage = "No audio recorded.") }
+        if (file == null || file.length() == 0L) {
+            _uiState.update {
+                it.copy(
+                    isSandboxProcessing = false,
+                    lastErrorMessage = "No audio was captured (0 bytes). Check microphone permission or speak louder.",
+                    feedbackMessage = "No audio recorded."
+                )
+            }
             return
         }
+
+        val fileSizeKb = file.length() / 1024
+        val audioInfo = "Recorded ${fileSizeKb}KB (${_uiState.value.sandboxRecordingSeconds}s)"
+        _uiState.update { it.copy(lastAudioInfo = audioInfo) }
 
         viewModelScope.launch {
             val key = securePreferences.getApiKey()
             val mode = _uiState.value.transcriptionMode
             val result = geminiApiClient.transcribeAudio(key, file, mode)
 
+            // Delete temporary audio file
+            try {
+                file.delete()
+            } catch (ignored: Exception) {
+            }
+
             if (result.isSuccess) {
-                val newText = result.getOrNull() ?: ""
+                val newText = (result.getOrNull() ?: "").trim()
+                if (newText.isBlank()) {
+                    _uiState.update {
+                        it.copy(
+                            isSandboxProcessing = false,
+                            lastErrorMessage = "No speech detected in audio. Please speak louder and closer to the microphone.",
+                            feedbackMessage = "No speech detected in audio."
+                        )
+                    }
+                    return@launch
+                }
+
                 _uiState.update { current ->
                     val currentText = current.sandboxTranscribedText
                     val combined = if (currentText.isNotBlank()) {
@@ -234,7 +276,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     current.copy(
                         isSandboxProcessing = false,
                         sandboxTranscribedText = combined,
-                        feedbackMessage = "Text appended successfully!"
+                        lastErrorMessage = null,
+                        feedbackMessage = "Dictated ${newText.split(" ").size} words successfully!"
                     )
                 }
             } else {
@@ -242,7 +285,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.update {
                     it.copy(
                         isSandboxProcessing = false,
-                        feedbackMessage = "Dictation failed: $err"
+                        lastErrorMessage = err,
+                        feedbackMessage = "Dictation error: $err"
                     )
                 }
             }
@@ -254,7 +298,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun clearSandboxText() {
-        _uiState.update { it.copy(sandboxTranscribedText = "") }
+        _uiState.update { it.copy(sandboxTranscribedText = "", lastErrorMessage = null) }
+    }
+
+    fun clearErrorMessage() {
+        _uiState.update { it.copy(lastErrorMessage = null) }
     }
 
     fun copySandboxText() {

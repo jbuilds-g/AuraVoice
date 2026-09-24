@@ -350,13 +350,35 @@ class OverlayService : Service() {
 
         val result = geminiApiClient.transcribeAudio(apiKey, file, mode)
 
+        // Delete audio cache file after processing
+        try {
+            file.delete()
+        } catch (ignored: Exception) {
+        }
+
         if (result.isSuccess) {
-            val text = result.getOrNull() ?: ""
+            val text = (result.getOrNull() ?: "").trim()
+            if (text.isBlank()) {
+                Log.w(TAG, "Transcription returned empty string")
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(this@OverlayService, "AuraVoice: No speech detected in recording.", Toast.LENGTH_SHORT).show()
+                }
+                _overlayState.value = OverlayState.ERROR
+                delay(1500)
+                _overlayState.value = OverlayState.IDLE
+                applyVisibilityRules()
+                return
+            }
+
             Log.d(TAG, "Transcription succeeded: $text")
 
             val accessibilityService = AuraAccessibilityService.instance
             if (accessibilityService != null) {
                 accessibilityService.injectOrAppendTranscribedText(text)
+                withContext(Dispatchers.Main) {
+                    val preview = if (text.length > 35) "${text.take(35)}..." else text
+                    Toast.makeText(this@OverlayService, "Dictated: \"$preview\"", Toast.LENGTH_SHORT).show()
+                }
             } else {
                 withContext(Dispatchers.Main) {
                     val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
@@ -375,10 +397,10 @@ class OverlayService : Service() {
             val errorMsg = result.exceptionOrNull()?.message ?: "Transcription failed"
             Log.e(TAG, "Transcription error: $errorMsg")
             withContext(Dispatchers.Main) {
-                Toast.makeText(this@OverlayService, errorMsg, Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@OverlayService, "Dictation Error: $errorMsg", Toast.LENGTH_LONG).show()
             }
             _overlayState.value = OverlayState.ERROR
-            delay(1800)
+            delay(2000)
             _overlayState.value = OverlayState.IDLE
             applyVisibilityRules()
         }

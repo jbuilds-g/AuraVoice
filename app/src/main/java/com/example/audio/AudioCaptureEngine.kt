@@ -3,24 +3,29 @@ package com.example.audio
 import android.content.Context
 import android.media.MediaRecorder
 import android.os.Build
+import android.os.SystemClock
 import android.util.Log
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
 import java.io.File
 
 class AudioCaptureEngine(private val context: Context) {
 
     companion object {
         private const val TAG = "AudioCaptureEngine"
-        private const val FILE_NAME = "wispr_flow_input.m4a"
         const val SAMPLE_RATE_HZ = 16000
     }
 
     private var mediaRecorder: MediaRecorder? = null
     private var outputFile: File? = null
+    private var recordingStartTimeMs: Long = 0L
+
     var isRecording: Boolean = false
         private set
 
     /**
      * Starts audio capture with 16kHz mono AAC/m4a encoding into app cache directory.
+     * Uses unique timestamped files to prevent caching or concurrency issues.
      */
     @Synchronized
     fun startRecording(): Result<File> {
@@ -29,7 +34,8 @@ class AudioCaptureEngine(private val context: Context) {
         }
 
         return try {
-            val file = File(context.cacheDir, FILE_NAME)
+            val fileName = "aura_audio_${System.currentTimeMillis()}.m4a"
+            val file = File(context.cacheDir, fileName)
             if (file.exists()) {
                 file.delete()
             }
@@ -56,29 +62,40 @@ class AudioCaptureEngine(private val context: Context) {
 
             mediaRecorder = recorder
             isRecording = true
-            Log.d(TAG, "Recording started -> ${file.absolutePath}")
+            recordingStartTimeMs = SystemClock.elapsedRealtime()
+            Log.d(TAG, "Audio recording successfully started -> ${file.absolutePath}")
             Result.success(file)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start audio recording", e)
             cleanup()
-            Result.failure(e)
+            Result.failure(Exception("Could not initialize microphone: ${e.message}"))
         }
     }
 
     /**
      * Stops audio capture and returns the generated m4a audio file.
+     * Guarantees a minimum recording duration so MediaRecorder can flush AAC frames without throwing.
      */
     @Synchronized
     fun stopRecording(): File? {
         if (!isRecording) return null
 
         return try {
+            val elapsedMs = SystemClock.elapsedRealtime() - recordingStartTimeMs
+            // MediaRecorder requires at least ~500ms of recorded data, otherwise stop() throws
+            if (elapsedMs < 600) {
+                val sleepNeeded = 600 - elapsedMs
+                try {
+                    Thread.sleep(sleepNeeded)
+                } catch (ignored: InterruptedException) {
+                }
+            }
+
             mediaRecorder?.apply {
                 try {
                     stop()
                 } catch (e: RuntimeException) {
-                    // Happens if stopped immediately after start
-                    Log.w(TAG, "MediaRecorder stop called prematurely", e)
+                    Log.w(TAG, "MediaRecorder stop called prematurely or failed", e)
                 }
                 release()
             }
@@ -87,10 +104,10 @@ class AudioCaptureEngine(private val context: Context) {
 
             val file = outputFile
             if (file != null && file.exists() && file.length() > 0) {
-                Log.d(TAG, "Recording completed. File size: ${file.length()} bytes")
+                Log.d(TAG, "Recording completed. File: ${file.name}, Size: ${file.length()} bytes")
                 file
             } else {
-                Log.w(TAG, "Recording stopped but output file is empty or missing")
+                Log.w(TAG, "Recording stopped but output file is empty (0 bytes) or missing")
                 null
             }
         } catch (e: Exception) {
