@@ -179,7 +179,7 @@ class OverlayService : Service() {
     private var dismissTargetView: ComposeView? = null
     private var isFloatingButtonDismissed = false
     private var isDraggingOverlay = false
-    private var isOverDismissTarget = false
+    private val _isOverDismissTarget = MutableStateFlow(false)
     private var shakePeakActive = false
     private var shakePulseCount = 0
     private var lastShakePulseAt = 0L
@@ -327,6 +327,7 @@ class OverlayService : Service() {
 
             setContent {
                 MyApplicationTheme {
+                    val isOverDismissTarget by _isOverDismissTarget.collectAsState()
                     DismissTarget(isActive = isOverDismissTarget)
                 }
             }
@@ -356,7 +357,7 @@ class OverlayService : Service() {
     private fun beginOverlayDrag() {
         if (isFloatingButtonDismissed) return
         isDraggingOverlay = true
-        isOverDismissTarget = false
+        _isOverDismissTarget.value = false
         showDismissTarget()
     }
 
@@ -364,8 +365,8 @@ class OverlayService : Service() {
         if (!isDraggingOverlay) return
         isDraggingOverlay = false
 
-        val shouldDismiss = isOverDismissTarget && _overlayState.value == OverlayState.IDLE
-        isOverDismissTarget = false
+        val shouldDismiss = _isOverDismissTarget.value && _overlayState.value == OverlayState.IDLE
+        _isOverDismissTarget.value = false
         hideDismissTarget()
 
         if (shouldDismiss) {
@@ -399,9 +400,8 @@ class OverlayService : Service() {
             val radius = DISMISS_ZONE_RADIUS_DP * resources.displayMetrics.density
             val hovered = distance <= radius
 
-            if (hovered != isOverDismissTarget) {
-                isOverDismissTarget = hovered
-                target.invalidate()
+            if (hovered != _isOverDismissTarget.value) {
+                _isOverDismissTarget.value = hovered
             }
         }
     }
@@ -411,12 +411,13 @@ class OverlayService : Service() {
     }
 
     private fun hideDismissTarget() {
+        _isOverDismissTarget.value = false
         dismissTargetView?.visibility = View.GONE
     }
 
     private fun dismissFloatingButton() {
         isFloatingButtonDismissed = true
-        isOverDismissTarget = false
+        _isOverDismissTarget.value = false
         composeView?.visibility = View.GONE
         startShakeDetection()
         triggerHaptic()
