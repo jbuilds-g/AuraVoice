@@ -5,6 +5,7 @@ import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.graphics.Rect
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -103,6 +104,20 @@ class AuraAccessibilityService : AccessibilityService() {
                 (focusedNode != null && focusedNode.isEditable)
 
         OverlayService.updateEditableFocusState(isEditable)
+    }
+
+    /**
+     * Returns the top edge of the active on-screen keyboard in screen coordinates.
+     * Used by the floating overlay to keep the drag-to-dismiss target visible above the IME.
+     */
+    fun getInputMethodTop(): Int? {
+        val inputMethodWindow = windows.firstOrNull {
+            it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD
+        } ?: return null
+
+        val bounds = Rect()
+        inputMethodWindow.getBoundsInScreen(bounds)
+        return bounds.top.takeIf { bounds.height() > 0 }
     }
 
     override fun onInterrupt() {
