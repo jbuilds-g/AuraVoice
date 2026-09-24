@@ -122,9 +122,10 @@ class GeminiApiClient {
 
             // Preserve an actual API/network/model error when one of the attempts failed
             // for a reason other than an empty/no-speech result.
-            val finalError = primaryResult.exceptionOrNull()?.message
-                ?: fallbackResult.exceptionOrNull()?.message
-                ?: secondaryResult.exceptionOrNull()?.message
+            val finalError = listOf(primaryResult, fallbackResult, secondaryResult)
+                .mapNotNull { it.exceptionOrNull() }
+                .firstOrNull { it !is NoSpeechDetectedException }
+                ?.message
                 ?: "Transcription failed."
             Result.failure(Exception(finalError))
 
