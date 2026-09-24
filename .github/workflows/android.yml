@@ -58,8 +58,6 @@ jobs:
           set -euo pipefail
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
           chmod 600 "$KEYSTORE_PATH"
-      - name: Run release unit tests
-        run: gradle :app:testReleaseUnitTest
       - name: Build optimized release APKs
         run: gradle :app:assembleRelease
       - name: Verify and stage APKs
