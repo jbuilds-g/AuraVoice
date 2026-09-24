@@ -177,6 +177,7 @@ class OverlayService : Service() {
     private var retryFile: File? = null
 
     private var dismissTargetView: ComposeView? = null
+    private var dismissTargetParams: WindowManager.LayoutParams? = null
     private var isFloatingButtonDismissed = false
     private var isDraggingOverlay = false
     private val _isOverDismissTarget = MutableStateFlow(false)
@@ -349,6 +350,7 @@ class OverlayService : Service() {
             windowManager.addView(target, targetParams)
             target.visibility = View.GONE
             dismissTargetView = target
+            dismissTargetParams = targetParams
         } catch (e: Exception) {
             Log.e(TAG, "Error adding dismiss target overlay", e)
         }
@@ -407,7 +409,40 @@ class OverlayService : Service() {
     }
 
     private fun showDismissTarget() {
-        dismissTargetView?.visibility = View.VISIBLE
+        val target = dismissTargetView ?: return
+        positionDismissTarget()
+        target.visibility = View.VISIBLE
+    }
+
+    private fun positionDismissTarget() {
+        val target = dismissTargetView ?: return
+        val params = dismissTargetParams ?: return
+        val density = resources.displayMetrics.density
+        val edgeMargin = (16 * density).toInt()
+        val keyboardGap = (24 * density).toInt()
+        val targetSize = params.height
+
+        val screenHeight = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            windowManager.currentWindowMetrics.bounds.height()
+        } else {
+            resources.displayMetrics.heightPixels
+        }
+
+        val keyboardTop = AuraAccessibilityService.instance?.getInputMethodTop()
+        val targetTop = if (keyboardTop != null && keyboardTop > targetSize + keyboardGap) {
+            keyboardTop - targetSize - keyboardGap
+        } else {
+            screenHeight - targetSize - (DISMISS_TARGET_BOTTOM_MARGIN_DP * density).toInt()
+        }
+
+        params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+        params.y = targetTop.coerceAtLeast(edgeMargin)
+
+        try {
+            windowManager.updateViewLayout(target, params)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed positioning dismiss target", e)
+        }
     }
 
     private fun hideDismissTarget() {
@@ -699,6 +734,7 @@ class OverlayService : Service() {
             }
         }
         dismissTargetView = null
+        dismissTargetParams = null
 
         lifecycleOwner?.onStop()
         lifecycleOwner?.onDestroy()
