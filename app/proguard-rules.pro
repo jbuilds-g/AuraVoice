@@ -24,3 +24,6 @@
 -dontwarn org.bouncycastle.jsse.**
 -dontwarn org.conscrypt.**
 -dontwarn org.openjsse.**
+
+# Tink references optional Error Prone annotations that are not packaged.
+-dontwarn com.google.errorprone.annotations.**
