@@ -6,6 +6,10 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.graphics.PixelFormat
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -44,6 +48,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Refresh
@@ -87,6 +92,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.hypot
 import java.io.File
 
 enum class OverlayState {
@@ -108,6 +114,14 @@ class OverlayService : Service() {
     companion object {
         private const val TAG = "OverlayService"
         private const val NOTIFICATION_ID = 1001
+
+        private const val DISMISS_TARGET_SIZE_DP = 76
+        private const val DISMISS_TARGET_BOTTOM_MARGIN_DP = 72
+        private const val DISMISS_ZONE_RADIUS_DP = 92
+        private const val SHAKE_THRESHOLD = 11f
+        private const val SHAKE_RELEASE_THRESHOLD = 7f
+        private const val SHAKE_WINDOW_MS = 700L
+        private const val SHAKE_COOLDOWN_MS = 1200L
 
         private val _overlayState = MutableStateFlow(OverlayState.IDLE)
         val overlayState: StateFlow<OverlayState> = _overlayState.asStateFlow()
@@ -157,8 +171,52 @@ class OverlayService : Service() {
 
     private lateinit var securePreferences: SecurePreferences
     private lateinit var audioCaptureEngine: AudioCaptureEngine
+    private lateinit var sensorManager: SensorManager
+    private var shakeSensor: Sensor? = null
     private val geminiApiClient = GeminiApiClient()
     private var retryFile: File? = null
+
+    private var dismissTargetView: ComposeView? = null
+    private var isFloatingButtonDismissed = false
+    private var isDraggingOverlay = false
+    private var isOverDismissTarget = false
+    private var shakePeakActive = false
+    private var shakePulseCount = 0
+    private var lastShakePulseAt = 0L
+    private var shakeCooldownUntil = 0L
+
+    private val shakeListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) {
+            if (!isFloatingButtonDismissed || event.values.size < 3) return
+
+            val magnitude = hypot(
+                hypot(event.values[0].toDouble(), event.values[1].toDouble()),
+                event.values[2].toDouble()
+            ).toFloat()
+
+            val now = android.os.SystemClock.elapsedRealtime()
+
+            if (magnitude >= SHAKE_THRESHOLD && !shakePeakActive) {
+                shakePeakActive = true
+
+                if (now - lastShakePulseAt <= SHAKE_WINDOW_MS) {
+                    shakePulseCount++
+                } else {
+                    shakePulseCount = 1
+                }
+                lastShakePulseAt = now
+
+                if (shakePulseCount >= 2 && now >= shakeCooldownUntil) {
+                    restoreFloatingButton()
+                    shakeCooldownUntil = now + SHAKE_COOLDOWN_MS
+                }
+            } else if (magnitude <= SHAKE_RELEASE_THRESHOLD) {
+                shakePeakActive = false
+            }
+        }
+
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -168,10 +226,14 @@ class OverlayService : Service() {
 
         securePreferences = SecurePreferences(this)
         audioCaptureEngine = AudioCaptureEngine(this)
+        sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        shakeSensor = sensorManager.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION)
+            ?: sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
         startForeground(NOTIFICATION_ID, buildNotification())
         initOverlayView()
+        initDismissTargetView()
         Log.d(TAG, "OverlayService active.")
     }
 
@@ -224,15 +286,19 @@ class OverlayService : Service() {
                     DraggableFloatingMicButton(
                         state = state,
                         canRetry = canRetry,
+                        onDragStart = { beginOverlayDrag() },
                         onDragDelta = { dx, dy ->
                             layoutParams.x += dx.toInt()
                             layoutParams.y += dy.toInt()
                             try {
                                 windowManager.updateViewLayout(this, layoutParams)
+                                updateDismissTargetHoverState()
                             } catch (e: Exception) {
                                 Log.e(TAG, "Failed updating overlay layout position", e)
                             }
                         },
+                        onDragEnd = { finishOverlayDrag() },
+                        onDragCancel = { finishOverlayDrag() },
                         onClick = { onMicButtonClicked() },
                         onRetry = { retryLastAttempt() }
                     )
@@ -249,6 +315,157 @@ class OverlayService : Service() {
         }
     }
 
+    private fun initDismissTargetView() {
+        val density = resources.displayMetrics.density
+        val targetSize = (DISMISS_TARGET_SIZE_DP * density).toInt()
+        val bottomMargin = (DISMISS_TARGET_BOTTOM_MARGIN_DP * density).toInt()
+
+        val target = ComposeView(this).apply {
+            setViewTreeLifecycleOwner(lifecycleOwner)
+            setViewTreeSavedStateRegistryOwner(lifecycleOwner)
+            setViewTreeViewModelStoreOwner(lifecycleOwner)
+
+            setContent {
+                MyApplicationTheme {
+                    DismissTarget(isActive = isOverDismissTarget)
+                }
+            }
+        }
+
+        val targetParams = WindowManager.LayoutParams(
+            targetSize,
+            targetSize,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            y = bottomMargin
+        }
+
+        try {
+            windowManager.addView(target, targetParams)
+            target.visibility = View.GONE
+            dismissTargetView = target
+        } catch (e: Exception) {
+            Log.e(TAG, "Error adding dismiss target overlay", e)
+        }
+    }
+
+    private fun beginOverlayDrag() {
+        if (isFloatingButtonDismissed) return
+        isDraggingOverlay = true
+        isOverDismissTarget = false
+        showDismissTarget()
+    }
+
+    private fun finishOverlayDrag() {
+        if (!isDraggingOverlay) return
+        isDraggingOverlay = false
+
+        val shouldDismiss = isOverDismissTarget && _overlayState.value == OverlayState.IDLE
+        isOverDismissTarget = false
+        hideDismissTarget()
+
+        if (shouldDismiss) {
+            dismissFloatingButton()
+        }
+    }
+
+    private fun updateDismissTargetHoverState() {
+        if (!isDraggingOverlay) return
+
+        mainHandler.post {
+            val button = composeView ?: return@post
+            val target = dismissTargetView ?: return@post
+
+            if (button.visibility != View.VISIBLE || target.visibility != View.VISIBLE) return@post
+
+            val buttonLocation = IntArray(2)
+            val targetLocation = IntArray(2)
+            button.getLocationOnScreen(buttonLocation)
+            target.getLocationOnScreen(targetLocation)
+
+            val buttonCenterX = buttonLocation[0] + button.width / 2f
+            val buttonCenterY = buttonLocation[1] + button.height / 2f
+            val targetCenterX = targetLocation[0] + target.width / 2f
+            val targetCenterY = targetLocation[1] + target.height / 2f
+            val distance = hypot(
+                (buttonCenterX - targetCenterX).toDouble(),
+                (buttonCenterY - targetCenterY).toDouble()
+            )
+
+            val radius = DISMISS_ZONE_RADIUS_DP * resources.displayMetrics.density
+            val hovered = distance <= radius
+
+            if (hovered != isOverDismissTarget) {
+                isOverDismissTarget = hovered
+                target.invalidate()
+            }
+        }
+    }
+
+    private fun showDismissTarget() {
+        dismissTargetView?.visibility = View.VISIBLE
+    }
+
+    private fun hideDismissTarget() {
+        dismissTargetView?.visibility = View.GONE
+    }
+
+    private fun dismissFloatingButton() {
+        isFloatingButtonDismissed = true
+        isOverDismissTarget = false
+        composeView?.visibility = View.GONE
+        startShakeDetection()
+        triggerHaptic()
+        Log.d(TAG, "Floating mic dismissed; shake detection enabled.")
+    }
+
+    private fun restoreFloatingButton() {
+        mainHandler.post {
+            if (!isFloatingButtonDismissed) return@post
+
+            isFloatingButtonDismissed = false
+            shakePulseCount = 0
+            lastShakePulseAt = 0L
+            shakePeakActive = false
+            stopShakeDetection()
+            triggerHaptic()
+            applyVisibilityRules()
+            Log.d(TAG, "Floating mic restored by shake.")
+        }
+    }
+
+    private fun startShakeDetection() {
+        val sensor = shakeSensor
+        if (sensor == null) {
+            Log.w(TAG, "No suitable motion sensor available for shake-to-restore.")
+            return
+        }
+
+        shakePulseCount = 0
+        lastShakePulseAt = 0L
+        shakePeakActive = false
+        try {
+            sensorManager.registerListener(this.shakeListener, sensor, SensorManager.SENSOR_DELAY_GAME)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to register shake sensor listener", e)
+        }
+    }
+
+    private fun stopShakeDetection() {
+        try {
+            sensorManager.unregisterListener(shakeListener)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to unregister shake sensor listener", e)
+        }
+        shakePulseCount = 0
+        lastShakePulseAt = 0L
+        shakePeakActive = false
+    }
+
     /**
      * Controls Dynamic Visibility:
      * - VISIBLE only when node.isEditable == true.
@@ -258,6 +475,11 @@ class OverlayService : Service() {
     fun applyVisibilityRules() {
         mainHandler.post {
             val view = composeView ?: return@post
+
+            if (isFloatingButtonDismissed) {
+                view.visibility = View.GONE
+                return@post
+            }
 
             if (_overlayState.value != OverlayState.IDLE) {
                 view.visibility = View.VISIBLE
@@ -455,6 +677,8 @@ class OverlayService : Service() {
         _overlayState.value = OverlayState.IDLE
         serviceScope.cancel()
 
+        stopShakeDetection()
+        hideDismissTarget()
         audioCaptureEngine.cancelRecording()
 
         composeView?.let {
@@ -465,6 +689,15 @@ class OverlayService : Service() {
             }
         }
         composeView = null
+
+        dismissTargetView?.let {
+            try {
+                windowManager.removeView(it)
+            } catch (e: Exception) {
+                // ignore
+            }
+        }
+        dismissTargetView = null
 
         lifecycleOwner?.onStop()
         lifecycleOwner?.onDestroy()
@@ -480,7 +713,10 @@ class OverlayService : Service() {
 fun DraggableFloatingMicButton(
     state: OverlayState,
     canRetry: Boolean,
+    onDragStart: () -> Unit,
     onDragDelta: (Float, Float) -> Unit,
+    onDragEnd: () -> Unit,
+    onDragCancel: () -> Unit,
     onClick: () -> Unit,
     onRetry: () -> Unit
 ) {
@@ -543,7 +779,11 @@ fun DraggableFloatingMicButton(
         modifier = Modifier
             .padding(6.dp)
             .pointerInput(Unit) {
-                detectDragGestures { change, dragAmount ->
+                detectDragGestures(
+                    onDragStart = { onDragStart() },
+                    onDragEnd = { onDragEnd() },
+                    onDragCancel = { onDragCancel() }
+                ) { change, dragAmount ->
                     change.consume()
                     onDragDelta(dragAmount.x, dragAmount.y)
                 }
@@ -643,6 +883,46 @@ fun DraggableFloatingMicButton(
                     modifier = Modifier.size(24.dp)
                 )
             }
+        }
+    }
+}
+
+
+@Composable
+private fun DismissTarget(isActive: Boolean) {
+    val colorScheme = MaterialTheme.colorScheme
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(6.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .size(64.dp)
+                .shadow(
+                    elevation = 8.dp,
+                    shape = CircleShape,
+                    spotColor = colorScheme.error
+                )
+                .clip(CircleShape)
+                .background(
+                    if (isActive) colorScheme.error else colorScheme.errorContainer
+                )
+                .border(
+                    2.dp,
+                    if (isActive) colorScheme.onError else colorScheme.error,
+                    CircleShape
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Close,
+                contentDescription = "Dismiss floating mic",
+                tint = if (isActive) colorScheme.onError else colorScheme.onErrorContainer,
+                modifier = Modifier.size(30.dp)
+            )
         }
     }
 }
