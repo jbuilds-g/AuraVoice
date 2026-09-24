@@ -38,6 +38,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -45,10 +46,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Mic
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -115,6 +118,9 @@ class OverlayService : Service() {
         private val _isEditableFocused = MutableStateFlow(false)
         val isEditableFocused: StateFlow<Boolean> = _isEditableFocused.asStateFlow()
 
+        private val _canRetry = MutableStateFlow(false)
+        val canRetry: StateFlow<Boolean> = _canRetry.asStateFlow()
+
         @Volatile
         private var activeServiceInstance: OverlayService? = null
 
@@ -152,6 +158,7 @@ class OverlayService : Service() {
     private lateinit var securePreferences: SecurePreferences
     private lateinit var audioCaptureEngine: AudioCaptureEngine
     private val geminiApiClient = GeminiApiClient()
+    private var retryFile: File? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -213,8 +220,10 @@ class OverlayService : Service() {
             setContent {
                 MyApplicationTheme {
                     val state by _overlayState.collectAsState()
+                    val canRetry by _canRetry.collectAsState()
                     DraggableFloatingMicButton(
                         state = state,
+                        canRetry = canRetry,
                         onDragDelta = { dx, dy ->
                             layoutParams.x += dx.toInt()
                             layoutParams.y += dy.toInt()
@@ -224,7 +233,8 @@ class OverlayService : Service() {
                                 Log.e(TAG, "Failed updating overlay layout position", e)
                             }
                         },
-                        onClick = { onMicButtonClicked() }
+                        onClick = { onMicButtonClicked() },
+                        onRetry = { retryLastAttempt() }
                     )
                 }
             }
@@ -295,6 +305,10 @@ class OverlayService : Service() {
     }
 
     private fun startRecording() {
+        retryFile?.let { if (it.exists()) it.delete() }
+        retryFile = null
+        _canRetry.value = false
+
         val apiKey = securePreferences.getApiKey()
         if (apiKey.isBlank()) {
             Toast.makeText(this, "No API key configured. Please set one in AuraVoice.", Toast.LENGTH_LONG).show()
@@ -350,22 +364,20 @@ class OverlayService : Service() {
 
         val result = geminiApiClient.transcribeAudio(apiKey, file, mode)
 
-        // Delete audio cache file after processing
-        try {
-            file.delete()
-        } catch (ignored: Exception) {
-        }
-
         if (result.isSuccess) {
             val text = (result.getOrNull() ?: "").trim()
             if (text.isBlank()) {
                 Log.w(TAG, "Transcription returned empty string")
+                retryFile = file
+                _canRetry.value = true
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(this@OverlayService, "AuraVoice: No speech detected in recording.", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(
+                        this@OverlayService,
+                        "AuraVoice: No speech detected in recording. Tap retry to try again.",
+                        Toast.LENGTH_LONG
+                    ).show()
                 }
                 _overlayState.value = OverlayState.ERROR
-                delay(1500)
-                _overlayState.value = OverlayState.IDLE
                 applyVisibilityRules()
                 return
             }
@@ -388,6 +400,13 @@ class OverlayService : Service() {
                 }
             }
 
+            try {
+                file.delete()
+            } catch (ignored: Exception) {
+            }
+            retryFile = null
+            _canRetry.value = false
+
             _overlayState.value = OverlayState.SUCCESS
             delay(1200)
             _overlayState.value = OverlayState.IDLE
@@ -396,13 +415,34 @@ class OverlayService : Service() {
         } else {
             val errorMsg = result.exceptionOrNull()?.message ?: "Transcription failed"
             Log.e(TAG, "Transcription error: $errorMsg")
+            retryFile = file
+            _canRetry.value = true
             withContext(Dispatchers.Main) {
-                Toast.makeText(this@OverlayService, "Dictation Error: $errorMsg", Toast.LENGTH_LONG).show()
+                Toast.makeText(
+                    this@OverlayService,
+                    "Dictation Error: $errorMsg. Tap retry to try again.",
+                    Toast.LENGTH_LONG
+                ).show()
             }
             _overlayState.value = OverlayState.ERROR
-            delay(2000)
+            applyVisibilityRules()
+        }
+    }
+
+    private fun retryLastAttempt() {
+        val file = retryFile
+        if (file == null || !file.exists()) {
+            retryFile = null
+            _canRetry.value = false
             _overlayState.value = OverlayState.IDLE
             applyVisibilityRules()
+            return
+        }
+
+        triggerHaptic()
+        _overlayState.value = OverlayState.PROCESSING
+        serviceScope.launch {
+            processAudioFile(file)
         }
     }
 
@@ -439,8 +479,10 @@ class OverlayService : Service() {
 @Composable
 fun DraggableFloatingMicButton(
     state: OverlayState,
+    canRetry: Boolean,
     onDragDelta: (Float, Float) -> Unit,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onRetry: () -> Unit
 ) {
     val colorScheme = MaterialTheme.colorScheme
     val infiniteTransition = rememberInfiniteTransition(label = "overlay_pulse")
@@ -588,6 +630,24 @@ fun DraggableFloatingMicButton(
                             modifier = Modifier.size(26.dp)
                         )
                     }
+                }
+            }
+            }
+
+            if (state == OverlayState.ERROR && canRetry) {
+                IconButton(
+                    onClick = onRetry,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .background(colorScheme.errorContainer, CircleShape)
+                        .border(2.dp, colorScheme.error, CircleShape)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Refresh,
+                        contentDescription = "Retry dictation",
+                        tint = colorScheme.onErrorContainer,
+                        modifier = Modifier.size(24.dp)
+                    )
                 }
             }
         }
