@@ -14,30 +14,17 @@ import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.TimeUnit
 
-/**
- * GeminiApiClient handles speech-to-text dictation using Google's Gemini API.
- * Primary Model: gemini-3.5-transcribe via the Generate Content API.
- * Fallback Models: general multimodal Gemini Flash models with explicit dictation prompts.
- */
 class GeminiApiClient {
-
-    class NoSpeechDetectedException : Exception(
-        "No speech detected in the recording. Tap the mic and try again."
-    )
+    class NoSpeechDetectedException : Exception("No speech detected in the recording. Tap the mic and try again.")
 
     companion object {
         private const val TAG = "GeminiApiClient"
-        private const val PRIMARY_TRANSCRIBE_ENDPOINT =
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-transcribe:generateContent"
-        private const val FALLBACK_TRANSCRIBE_ENDPOINT =
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent"
-        private const val SECONDARY_FALLBACK_ENDPOINT =
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
-
-        private const val MINIMAL_VERIFICATION_AUDIO_BASE64 =
-            "AAAAHGZ0eXBtcDQyAAAAAW1wNDJtcDQxaXNvbQAAAAxtb292AAAAbG12aGQAAAAAAAAAAAAAAAAAAAPoAAAA" +
-            "AAABAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAA" +
-            "QAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        private const val PRIMARY_TRANSCRIBE_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-transcribe:generateContent"
+        private const val FALLBACK_TRANSCRIBE_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent"
+        private const val SECONDARY_FALLBACK_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+        private const val MINIMAL_VERIFICATION_AUDIO_BASE64 = "AAAAHGZ0eXBtcDQyAAAAAW1wNDJtcDQxaXNvbQAAAAxtb292AAAAbG12aGQAAAAAAAAAAAAAAAAAAAPoAAAA" +
+                "AAABAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+                "QAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
     }
 
     private val client = OkHttpClient.Builder()
@@ -60,8 +47,7 @@ class GeminiApiClient {
 
         DiagnosticLog.add("Transcription started (mode: ${mode.lowercase()})")
         try {
-            val audioBytes = audioFile.readBytes()
-            val base64Audio = Base64.encodeToString(audioBytes, Base64.NO_WRAP)
+            val base64Audio = Base64.encodeToString(audioFile.readBytes(), Base64.NO_WRAP)
 
             val primaryResult = executePrimaryTranscribeRequest(apiKey, base64Audio, mode)
             if (primaryResult.isSuccess) {
@@ -72,8 +58,7 @@ class GeminiApiClient {
                 }
             }
 
-            val primaryError = primaryResult.exceptionOrNull()?.message ?: "empty output"
-            DiagnosticLog.add("Primary model failed: ${primaryError.take(120)}")
+            DiagnosticLog.add("Primary model failed: ${(primaryResult.exceptionOrNull()?.message ?: "empty output").take(120)}")
 
             val fallbackResult = executeMultimodalFallback(FALLBACK_TRANSCRIBE_ENDPOINT, apiKey, base64Audio, mode)
             if (fallbackResult.isSuccess) {
@@ -83,7 +68,7 @@ class GeminiApiClient {
                     return@withContext Result.success(text)
                 }
             }
-            DiagnosticLog.add("Fallback failed: ${fallbackResult.exceptionOrNull()?.message?.take(120) ?: "empty output"}")
+            DiagnosticLog.add("Fallback failed: ${(fallbackResult.exceptionOrNull()?.message ?: "empty output").take(120)}")
 
             val secondaryResult = executeMultimodalFallback(SECONDARY_FALLBACK_ENDPOINT, apiKey, base64Audio, mode)
             if (secondaryResult.isSuccess) {
@@ -93,12 +78,11 @@ class GeminiApiClient {
                     return@withContext Result.success(text)
                 }
             }
-            DiagnosticLog.add("Secondary fallback failed: ${secondaryResult.exceptionOrNull()?.message?.take(120) ?: "empty output"}")
+            DiagnosticLog.add("Secondary fallback failed: ${(secondaryResult.exceptionOrNull()?.message ?: "empty output").take(120)}")
 
             val allAttemptsFoundNoSpeech = isNoSpeechDetected(primaryResult) &&
                     isNoSpeechDetected(fallbackResult) &&
                     isNoSpeechDetected(secondaryResult)
-
             if (allAttemptsFoundNoSpeech) {
                 DiagnosticLog.add("No speech detected across all transcription attempts")
                 return@withContext Result.failure(NoSpeechDetectedException())
@@ -146,9 +130,7 @@ class GeminiApiClient {
             client.newCall(request).execute().use { response ->
                 val bodyString = response.body?.string() ?: ""
                 Log.d(TAG, "Primary response code: ${response.code}, body: ${bodyString.take(300)}")
-                if (!response.isSuccessful) {
-                    return Result.failure(Exception(extractErrorMessage(bodyString, response.code)))
-                }
+                if (!response.isSuccessful) return Result.failure(Exception(extractErrorMessage(bodyString, response.code)))
                 parseCandidatesText(bodyString)
             }
         } catch (e: Exception) {
@@ -186,7 +168,6 @@ class GeminiApiClient {
                 contentObj.put("parts", parts)
                 contents.put(contentObj)
                 put("contents", contents)
-                put("generationConfig", JSONObject().apply { put("temperature", 0.0) })
             }
 
             val request = Request.Builder()
@@ -197,9 +178,7 @@ class GeminiApiClient {
             client.newCall(request).execute().use { response ->
                 val bodyString = response.body?.string() ?: ""
                 Log.d(TAG, "Fallback response code: ${response.code}, body: ${bodyString.take(300)}")
-                if (!response.isSuccessful) {
-                    return Result.failure(Exception(extractErrorMessage(bodyString, response.code)))
-                }
+                if (!response.isSuccessful) return Result.failure(Exception(extractErrorMessage(bodyString, response.code)))
                 parseCandidatesText(bodyString)
             }
         } catch (e: Exception) {
@@ -219,10 +198,10 @@ class GeminiApiClient {
             val candidates = responseJson.optJSONArray("candidates")
             if (candidates != null && candidates.length() > 0) {
                 val firstCandidate = candidates.getJSONObject(0)
-                val finishReason = firstCandidate.optString("finishReason", "")
-                if (finishReason == "SAFETY") return Result.failure(Exception("Transcription blocked by safety filters."))
-                val content = firstCandidate.optJSONObject("content")
-                val resParts = content?.optJSONArray("parts")
+                if (firstCandidate.optString("finishReason", "") == "SAFETY") {
+                    return Result.failure(Exception("Transcription blocked by safety filters."))
+                }
+                val resParts = firstCandidate.optJSONObject("content")?.optJSONArray("parts")
                 if (resParts != null && resParts.length() > 0) {
                     val sb = StringBuilder()
                     for (i in 0 until resParts.length()) {
@@ -307,14 +286,12 @@ class GeminiApiClient {
         }
     }
 
-    private fun isNoSpeechDetected(result: Result<String>): Boolean =
-        result.exceptionOrNull() is NoSpeechDetectedException
+    private fun isNoSpeechDetected(result: Result<String>): Boolean = result.exceptionOrNull() is NoSpeechDetectedException
 
     private fun extractErrorMessage(bodyString: String, statusCode: Int): String {
         return try {
             val json = JSONObject(bodyString)
-            val error = json.optJSONObject("error")
-            val message = error?.optString("message")
+            val message = json.optJSONObject("error")?.optString("message")
             if (!message.isNullOrBlank()) return "HTTP $statusCode: $message"
             "HTTP $statusCode: Request failed"
         } catch (_: Exception) {
