@@ -16,6 +16,7 @@ import java.util.concurrent.TimeUnit
 
 class GeminiApiClient {
     class NoSpeechDetectedException : Exception("No speech detected in the recording. Tap the mic and try again.")
+    class QuotaExceededException(val retryAfterSeconds: Long, message: String) : Exception(message)
 
     companion object {
         private const val TAG = "GeminiApiClient"
@@ -48,8 +49,8 @@ class GeminiApiClient {
         DiagnosticLog.add("Transcription started (mode: ${mode.lowercase()})")
         try {
             val base64Audio = Base64.encodeToString(audioFile.readBytes(), Base64.NO_WRAP)
-
             val primaryResult = executePrimaryTranscribeRequest(apiKey, base64Audio, mode)
+
             if (primaryResult.isSuccess) {
                 val text = primaryResult.getOrNull() ?: ""
                 if (text.isNotBlank()) {
@@ -58,7 +59,14 @@ class GeminiApiClient {
                 }
             }
 
-            DiagnosticLog.add("Primary model failed: ${(primaryResult.exceptionOrNull()?.message ?: "empty output").take(120)}")
+            val primaryError = primaryResult.exceptionOrNull()
+            if (primaryError is QuotaExceededException) {
+                QuotaCooldownController.start(primaryError.retryAfterSeconds)
+                DiagnosticLog.add("Quota cooldown started: ${primaryError.retryAfterSeconds}s")
+                return@withContext Result.failure(primaryError)
+            }
+
+            DiagnosticLog.add("Primary model failed: ${(primaryError?.message ?: "empty output").take(120)}")
 
             val fallbackResult = executeMultimodalFallback(FALLBACK_TRANSCRIBE_ENDPOINT, apiKey, base64Audio, mode)
             if (fallbackResult.isSuccess) {
@@ -68,7 +76,14 @@ class GeminiApiClient {
                     return@withContext Result.success(text)
                 }
             }
-            DiagnosticLog.add("Fallback failed: ${(fallbackResult.exceptionOrNull()?.message ?: "empty output").take(120)}")
+
+            val fallbackError = fallbackResult.exceptionOrNull()
+            if (fallbackError is QuotaExceededException) {
+                QuotaCooldownController.start(fallbackError.retryAfterSeconds)
+                DiagnosticLog.add("Quota cooldown started: ${fallbackError.retryAfterSeconds}s")
+                return@withContext Result.failure(fallbackError)
+            }
+            DiagnosticLog.add("Fallback failed: ${(fallbackError?.message ?: "empty output").take(120)}")
 
             val secondaryResult = executeMultimodalFallback(SECONDARY_FALLBACK_ENDPOINT, apiKey, base64Audio, mode)
             if (secondaryResult.isSuccess) {
@@ -78,7 +93,14 @@ class GeminiApiClient {
                     return@withContext Result.success(text)
                 }
             }
-            DiagnosticLog.add("Secondary fallback failed: ${(secondaryResult.exceptionOrNull()?.message ?: "empty output").take(120)}")
+
+            val secondaryError = secondaryResult.exceptionOrNull()
+            if (secondaryError is QuotaExceededException) {
+                QuotaCooldownController.start(secondaryError.retryAfterSeconds)
+                DiagnosticLog.add("Quota cooldown started: ${secondaryError.retryAfterSeconds}s")
+                return@withContext Result.failure(secondaryError)
+            }
+            DiagnosticLog.add("Secondary fallback failed: ${(secondaryError?.message ?: "empty output").take(120)}")
 
             val allAttemptsFoundNoSpeech = isNoSpeechDetected(primaryResult) &&
                     isNoSpeechDetected(fallbackResult) &&
@@ -121,16 +143,14 @@ class GeminiApiClient {
                     put("audioTranscriptionConfig", JSONObject().apply { put("mode", modeType) })
                 })
             }
-
             val request = Request.Builder()
                 .url("$PRIMARY_TRANSCRIBE_ENDPOINT?key=$apiKey")
                 .post(jsonBody.toString().toRequestBody("application/json".toMediaType()))
                 .build()
-
             client.newCall(request).execute().use { response ->
                 val bodyString = response.body?.string() ?: ""
                 Log.d(TAG, "Primary response code: ${response.code}, body: ${bodyString.take(300)}")
-                if (!response.isSuccessful) return Result.failure(Exception(extractErrorMessage(bodyString, response.code)))
+                if (!response.isSuccessful) return Result.failure(buildRequestException(bodyString, response.code, response.header("Retry-After")))
                 parseCandidatesText(bodyString)
             }
         } catch (e: Exception) {
@@ -153,7 +173,6 @@ class GeminiApiClient {
                         "If the audio contains no intelligible speech, return an empty response and nothing else. " +
                         "Output ONLY the final dictated text. Do NOT add a preamble, explanation, commentary, or markdown wrapper."
             }
-
             val jsonBody = JSONObject().apply {
                 val contents = JSONArray()
                 val contentObj = JSONObject()
@@ -169,16 +188,14 @@ class GeminiApiClient {
                 contents.put(contentObj)
                 put("contents", contents)
             }
-
             val request = Request.Builder()
                 .url("$endpoint?key=$apiKey")
                 .post(jsonBody.toString().toRequestBody("application/json".toMediaType()))
                 .build()
-
             client.newCall(request).execute().use { response ->
                 val bodyString = response.body?.string() ?: ""
                 Log.d(TAG, "Fallback response code: ${response.code}, body: ${bodyString.take(300)}")
-                if (!response.isSuccessful) return Result.failure(Exception(extractErrorMessage(bodyString, response.code)))
+                if (!response.isSuccessful) return Result.failure(buildRequestException(bodyString, response.code, response.header("Retry-After")))
                 parseCandidatesText(bodyString)
             }
         } catch (e: Exception) {
@@ -287,6 +304,35 @@ class GeminiApiClient {
     }
 
     private fun isNoSpeechDetected(result: Result<String>): Boolean = result.exceptionOrNull() is NoSpeechDetectedException
+
+    private fun buildRequestException(bodyString: String, statusCode: Int, retryAfterHeader: String?): Exception {
+        if (statusCode == 429) {
+            val retrySeconds = parseRetryDelay(bodyString, retryAfterHeader)
+            return QuotaExceededException(retrySeconds, "HTTP 429: Gemini rate limit or quota exceeded. Try again in about ${retrySeconds}s.")
+        }
+        return Exception(extractErrorMessage(bodyString, statusCode))
+    }
+
+    private fun parseRetryDelay(bodyString: String, retryAfterHeader: String?): Long {
+        retryAfterHeader?.toLongOrNull()?.let { return it.coerceIn(1L, 60L) }
+        return try {
+            val json = JSONObject(bodyString)
+            val details = json.optJSONObject("error")?.optJSONArray("details")
+            if (details != null) {
+                for (i in 0 until details.length()) {
+                    val detail = details.optJSONObject(i) ?: continue
+                    if (detail.optString("@type").contains("RetryInfo")) {
+                        val retryDelay = detail.optString("retryDelay")
+                        val match = Regex("(\\d+(?:\\.\\d+)?)s").find(retryDelay)
+                        if (match != null) return match.groupValues[1].toDouble().toLong().coerceIn(1L, 60L)
+                    }
+                }
+            }
+            30L
+        } catch (_: Exception) {
+            30L
+        }
+    }
 
     private fun extractErrorMessage(bodyString: String, statusCode: Int): String {
         return try {
