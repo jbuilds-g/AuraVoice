@@ -15,22 +15,33 @@ import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Key
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -40,7 +51,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.ui.components.AboutScreen
 import com.example.ui.components.ApiKeySection
 import com.example.ui.components.HeroStatusBar
@@ -160,10 +174,7 @@ fun MainScreenContent(
             uiState.hasOverlayPermission &&
             uiState.hasAccessibilityPermission
 
-    Box(
-        modifier = modifier.fillMaxSize(),
-        contentAlignment = Alignment.TopCenter
-    ) {
+    Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -221,43 +232,45 @@ fun MainScreenContent(
 @Composable
 fun MissingApiKeyPromptCard(modifier: Modifier = Modifier) {
     val colorScheme = MaterialTheme.colorScheme
-    androidx.compose.material3.Card(
+    Card(
         modifier = modifier.fillMaxWidth(),
-        shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
-        colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = colorScheme.errorContainer),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = colorScheme.errorContainer),
         border = androidx.compose.foundation.BorderStroke(1.5.dp, colorScheme.error.copy(alpha = 0.6f))
     ) {
-        androidx.compose.foundation.layout.Row(
+        Row(
             modifier = Modifier.fillMaxWidth().padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            androidx.compose.foundation.layout.Box(
+            Box(
                 modifier = Modifier
                     .size(42.dp)
-                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                    .clip(RoundedCornerShape(12.dp))
                     .background(colorScheme.error.copy(alpha = 0.15f))
-                    .border(1.dp, colorScheme.error.copy(alpha = 0.4f), androidx.compose.foundation.shape.RoundedCornerShape(12.dp)),
+                    .border(1.dp, colorScheme.error.copy(alpha = 0.4f), RoundedCornerShape(12.dp)),
                 contentAlignment = Alignment.Center
             ) {
-                androidx.compose.material3.Icon(
-                    imageVector = androidx.compose.material.icons.Icons.Rounded.Key,
+                Icon(
+                    imageVector = Icons.Rounded.Key,
                     contentDescription = null,
                     tint = colorScheme.error,
                     modifier = Modifier.size(22.dp)
                 )
             }
             Column(modifier = Modifier.weight(1f)) {
-                androidx.compose.material3.Text(
+                Text(
                     text = "Gemini API Key Required",
-                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold),
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                     color = colorScheme.onErrorContainer
                 )
                 Spacer(modifier = Modifier.height(2.dp))
-                androidx.compose.material3.Text(
+                Text(
                     text = "AuraVoice requires a Google AI Studio API key to transcribe speech. Please enter and save your key below to activate dictation.",
-                    style = MaterialTheme.typography.bodySmall.copy(color = colorScheme.onErrorContainer.copy(alpha = 0.9f), lineHeight = 16.dp.value.sp),
-                    color = colorScheme.onErrorContainer.copy(alpha = 0.9f)
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        color = colorScheme.onErrorContainer.copy(alpha = 0.9f),
+                        lineHeight = 16.sp
+                    )
                 )
             }
         }
