@@ -120,7 +120,8 @@ class GeminiApiClient {
     }
 
     /**
-     * Executes transcribe request targeting gemini-3.5-transcribe with transcription_config.
+     * Executes a Generate Content request targeting gemini-3.5-transcribe.
+     * Transcription options use the Generate Content API's audioTranscriptionConfig schema.
      */
     private fun executePrimaryTranscribeRequest(apiKey: String, base64Audio: String, mode: String): Result<String> {
         return try {
@@ -142,18 +143,13 @@ class GeminiApiClient {
                 contents.put(contentObj)
                 put("contents", contents)
 
-                // transcription_config with mode: {"type": "smart"} or {"type": "verbatim"}
-                val modeType = if (mode.equals("verbatim", ignoreCase = true)) "verbatim" else "smart"
-                val transcriptionConfig = JSONObject().apply {
-                    put("mode", JSONObject().apply {
-                        put("type", modeType)
+                // Generate Content API uses generationConfig.audioTranscriptionConfig.
+                // This endpoint does not accept the Interactions API's transcription_config shape.
+                val modeType = if (mode.equals("verbatim", ignoreCase = true)) "VERBATIM" else "SMART"
+                put("generationConfig", JSONObject().apply {
+                    put("audioTranscriptionConfig", JSONObject().apply {
+                        put("mode", modeType)
                     })
-                }
-
-                // Place both at root and inside generation_config to support all Gemini API schema versions
-                put("transcription_config", transcriptionConfig)
-                put("generation_config", JSONObject().apply {
-                    put("transcription_config", transcriptionConfig)
                 })
             }
 
@@ -328,12 +324,11 @@ class GeminiApiClient {
                 contents.put(contentObj)
                 put("contents", contents)
 
-                val transcriptionConfig = JSONObject().apply {
-                    put("mode", JSONObject().apply {
-                        put("type", "smart")
+                put("generationConfig", JSONObject().apply {
+                    put("audioTranscriptionConfig", JSONObject().apply {
+                        put("mode", "SMART")
                     })
-                }
-                put("transcription_config", transcriptionConfig)
+                })
             }
 
             val requestBody = jsonBody.toString().toRequestBody("application/json".toMediaType())
