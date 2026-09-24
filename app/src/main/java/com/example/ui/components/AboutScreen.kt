@@ -33,6 +33,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -58,46 +59,27 @@ fun AboutScreen(
 ) {
     val colorScheme = MaterialTheme.colorScheme
     val scrollState = rememberScrollState()
-    val logEntries by DiagnosticLog.entries.collectAsStateWithLifecycleCompat()
+    val logEntries by DiagnosticLog.entries.collectAsState()
     var logsExpanded by remember { mutableStateOf(false) }
 
     Column(
-        modifier = modifier
-            .fillMaxSize()
-            .widthIn(max = 680.dp)
-            .verticalScroll(scrollState)
-            .padding(horizontal = 20.dp, vertical = 20.dp),
+        modifier = modifier.fillMaxSize().widthIn(max = 680.dp).verticalScroll(scrollState).padding(horizontal = 20.dp, vertical = 20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) {
                 Icon(Icons.Rounded.ArrowBack, contentDescription = "Back")
             }
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "About AuraVoice",
-                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold)
-                )
-                Text(
-                    text = "How it works, permissions, and diagnostics",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colorScheme.onSurfaceVariant
-                )
+                Text("About AuraVoice", style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold))
+                Text("How it works, permissions, and diagnostics", style = MaterialTheme.typography.bodySmall, color = colorScheme.onSurfaceVariant)
             }
         }
 
         AboutArchitectureCard()
 
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(
-                text = "Permissions",
-                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                modifier = Modifier.padding(horizontal = 4.dp)
-            )
-
+            Text("Permissions", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold), modifier = Modifier.padding(horizontal = 4.dp))
             PermissionCard(
                 title = "Microphone Access",
                 description = "Captures the audio used for voice dictation.",
@@ -147,43 +129,25 @@ private fun AboutArchitectureCard(modifier: Modifier = Modifier) {
         colors = CardDefaults.cardColors(containerColor = colorScheme.surfaceContainer),
         border = BorderStroke(1.dp, colorScheme.outlineVariant)
     ) {
-        Column(
-            modifier = Modifier.padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
+        Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(colorScheme.primaryContainer),
+                    modifier = Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)).background(colorScheme.primaryContainer),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(Icons.Rounded.Info, contentDescription = null, tint = colorScheme.onPrimaryContainer)
                 }
                 Spacer(modifier = Modifier.width(12.dp))
-                Text(
-                    text = "How AuraVoice Works",
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                )
+                Text("How AuraVoice Works", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
             }
-
             Text(
                 text = "AuraVoice watches for editable text fields through Android Accessibility, shows the floating microphone only when typing, records your speech, and sends the audio to Gemini for transcription. Dictation is then inserted into the active field, with clipboard fallback when no field is available.",
-                style = MaterialTheme.typography.bodySmall.copy(
-                    color = colorScheme.onSurfaceVariant,
-                    lineHeight = 20.sp
-                )
+                style = MaterialTheme.typography.bodySmall.copy(color = colorScheme.onSurfaceVariant, lineHeight = 20.sp)
             )
-
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Rounded.Visibility, contentDescription = null, tint = colorScheme.primary, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "The overlay hides automatically when you are not typing.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colorScheme.onSurfaceVariant
-                )
+                Text("The overlay hides automatically when you are not typing.", style = MaterialTheme.typography.bodySmall, color = colorScheme.onSurfaceVariant)
             }
         }
     }
@@ -206,17 +170,11 @@ private fun DiagnosticLogsCard(
         onClick = onToggle
     ) {
         Column(modifier = Modifier.padding(18.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
+                    Text("Technical Logs", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
                     Text(
-                        text = "Technical Logs",
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                    )
-                    Text(
-                        text = if (entries.isEmpty()) "No diagnostic events yet" else "${entries.size} recent event${if (entries.size == 1) "" else "s"}",
+                        if (entries.isEmpty()) "No diagnostic events yet" else "${entries.size} recent event${if (entries.size == 1) "" else "s"}",
                         style = MaterialTheme.typography.bodySmall,
                         color = colorScheme.onSurfaceVariant
                     )
@@ -232,25 +190,21 @@ private fun DiagnosticLogsCard(
                 Spacer(modifier = Modifier.height(12.dp))
                 if (entries.isEmpty()) {
                     Text(
-                        text = "Logs record model selection, fallback attempts, timing-related events, and errors. API keys, audio, and transcripts are never stored here.",
+                        "Logs record model selection, fallback attempts, and errors. API keys, audio, and transcripts are never stored here.",
                         style = MaterialTheme.typography.bodySmall,
                         color = colorScheme.onSurfaceVariant
                     )
                 } else {
                     Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(240.dp)
-                            .clip(RoundedCornerShape(12.dp))
+                        modifier = Modifier.fillMaxWidth().height(240.dp).clip(RoundedCornerShape(12.dp))
                             .background(colorScheme.surface)
                             .border(1.dp, colorScheme.outlineVariant, RoundedCornerShape(12.dp))
-                            .verticalScroll(rememberScrollState())
-                            .padding(12.dp),
+                            .verticalScroll(rememberScrollState()).padding(12.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         entries.asReversed().forEach { entry ->
                             Text(
-                                text = "${entry.timestamp}  ${entry.message}",
+                                "${entry.timestamp}  ${entry.message}",
                                 style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
                                 color = colorScheme.onSurfaceVariant
                             )
@@ -258,7 +212,7 @@ private fun DiagnosticLogsCard(
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Logs stay in memory and are cleared when the app process ends or when you clear them.",
+                        "Logs stay in memory and are cleared when the app process ends or when you clear them.",
                         style = MaterialTheme.typography.labelSmall,
                         color = colorScheme.onSurfaceVariant
                     )
@@ -267,6 +221,3 @@ private fun DiagnosticLogsCard(
         }
     }
 }
-
-@Composable
-private fun <T> androidx.compose.runtime.State<T>.collectAsStateWithLifecycleCompat(): androidx.compose.runtime.State<T> = this
