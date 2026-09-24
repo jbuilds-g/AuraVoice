@@ -16,20 +16,23 @@ import java.util.concurrent.TimeUnit
 
 /**
  * GeminiApiClient handles speech-to-text dictation using Google's Gemini API.
- * Primary Model: gemini-3.5-transcribe with transcription_config { mode: { type: "smart" } }.
- * Fallback Model: gemini-2.5-flash / gemini-2.0-flash with a specialized speech cleanup system prompt
- * if gemini-3.5-transcribe is not accessible on the user's specific API key tier (e.g. HTTP 404).
+ * Primary Model: gemini-3.5-transcribe via the Generate Content API.
+ * Fallback Models: general multimodal Gemini Flash models with explicit dictation prompts.
  */
 class GeminiApiClient {
+
+    class NoSpeechDetectedException : Exception(
+        "No speech detected in the recording. Tap the mic and try again."
+    )
 
     companion object {
         private const val TAG = "GeminiApiClient"
         private const val PRIMARY_TRANSCRIBE_ENDPOINT =
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-transcribe:generateContent"
         private const val FALLBACK_TRANSCRIBE_ENDPOINT =
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent"
         private const val SECONDARY_FALLBACK_ENDPOINT =
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
 
         // Base64-encoded minimal silent AAC/MP4 audio payload for instant key verification
         private const val MINIMAL_VERIFICATION_AUDIO_BASE64 =
@@ -88,7 +91,8 @@ class GeminiApiClient {
             val primaryError = primaryResult.exceptionOrNull()?.message ?: "Empty output"
             Log.w(TAG, "Primary transcribe attempt failed or empty ($primaryError). Trying fallback multimodal audio model...")
 
-            // 2. If 404 (model not found on user's API key tier) or empty result, fallback to gemini-2.5-flash
+            // 2. Fall back to a general multimodal Gemini model when the dedicated
+            // transcription model is unavailable or returns no usable transcript.
             val fallbackResult = executeMultimodalFallback(FALLBACK_TRANSCRIBE_ENDPOINT, apiKey, base64Audio, mode)
             if (fallbackResult.isSuccess) {
                 val text = fallbackResult.getOrNull() ?: ""
@@ -98,7 +102,7 @@ class GeminiApiClient {
                 }
             }
 
-            // 3. Try secondary fallback gemini-2.0-flash if needed
+            // 3. Try the stable 2.5 Flash multimodal model if the first fallback fails.
             val secondaryResult = executeMultimodalFallback(SECONDARY_FALLBACK_ENDPOINT, apiKey, base64Audio, mode)
             if (secondaryResult.isSuccess) {
                 val text = secondaryResult.getOrNull() ?: ""
@@ -107,10 +111,21 @@ class GeminiApiClient {
                 }
             }
 
-            // If all failed, return the clearest diagnostic error
+            val allAttemptsFoundNoSpeech =
+                isNoSpeechDetected(primaryResult) &&
+                isNoSpeechDetected(fallbackResult) &&
+                isNoSpeechDetected(secondaryResult)
+
+            if (allAttemptsFoundNoSpeech) {
+                return@withContext Result.failure(NoSpeechDetectedException())
+            }
+
+            // Preserve an actual API/network/model error when one of the attempts failed
+            // for a reason other than an empty/no-speech result.
             val finalError = primaryResult.exceptionOrNull()?.message
                 ?: fallbackResult.exceptionOrNull()?.message
-                ?: "No speech detected in recording. Please speak louder and closer to the mic."
+                ?: secondaryResult.exceptionOrNull()?.message
+                ?: "Transcription failed."
             Result.failure(Exception(finalError))
 
         } catch (e: Exception) {
@@ -184,11 +199,14 @@ class GeminiApiClient {
             val url = "$endpoint?key=$apiKey"
 
             val promptText = if (mode.equals("verbatim", ignoreCase = true)) {
-                "Transcribe this audio file word-for-word exactly as spoken. Output only the transcript."
+                "Transcribe this audio file word-for-word exactly as spoken. Preserve filler words, repetitions, false starts, and the speaker's wording. " +
+                "Do not clean up, summarize, paraphrase, infer missing words, or add commentary. Output ONLY the transcript."
             } else {
-                "You are an AI voice dictation tool like Wispr Flow. Transcribe this audio recording into clean, ready-to-use text. " +
-                "Remove filler words (um, uh, like, you know), resolve any spoken self-corrections, and format numbers, punctuation, and bullet points if requested. " +
-                "Output ONLY the transcribed text. Do NOT add any preamble, conversational commentary, or markdown formatting."
+                "You are a voice dictation transcription engine. Listen to the audio and transcribe the user's spoken words into clean, ready-to-use text. " +
+                "Remove filler words, stutters, and obvious false starts. Resolve spoken self-corrections while preserving the user's final intended wording. " +
+                "Preserve names, technical terms, URLs, email addresses, and other meaningful details. Apply natural punctuation, capitalization, " +
+                "and formatting when clearly indicated by the speech. Do not summarize, paraphrase, invent, or describe the audio. " +
+                "Output ONLY the final dictated text. Do NOT add a preamble, explanation, commentary, or markdown wrapper."
             }
 
             val jsonBody = JSONObject().apply {
@@ -213,7 +231,7 @@ class GeminiApiClient {
                 contents.put(contentObj)
                 put("contents", contents)
 
-                put("generation_config", JSONObject().apply {
+                put("generationConfig", JSONObject().apply {
                     put("temperature", 0.0)
                 })
             }
@@ -289,7 +307,7 @@ class GeminiApiClient {
                 return Result.success(directText)
             }
 
-            Result.failure(Exception("No speech detected in audio recording. Please speak louder or closer to the microphone."))
+            Result.failure(NoSpeechDetectedException())
         } catch (e: Exception) {
             Result.failure(Exception("Failed to parse API response: ${e.message}"))
         }
@@ -363,7 +381,7 @@ class GeminiApiClient {
                     return@withContext Result.success(true)
                 }
 
-                // If 404 (gemini-3.5-transcribe preview not yet enabled on this key), check with fallback endpoint!
+                // If the dedicated transcription model is unavailable on this key, validate against a general multimodal model.
                 if (response.code == 404) {
                     val fallbackCheck = testKeyWithFallback(trimmedKey)
                     return@withContext fallbackCheck
@@ -408,7 +426,11 @@ class GeminiApiClient {
         }
     }
 
-    private fun extractErrorMessage(bodyString: String, statusCode: Int): String {
+    private fun isNoSpeechDetected(result: Result<String>): Boolean {
+        return result.exceptionOrNull() is NoSpeechDetectedException
+    }
+
+$helperAnchor
         return try {
             val json = JSONObject(bodyString)
             val errorObj = json.optJSONObject("error")
