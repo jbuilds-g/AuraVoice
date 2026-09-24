@@ -539,9 +539,8 @@ fun DraggableFloatingMicButton(
         OverlayState.ERROR -> colorScheme.onErrorContainer
     }
 
-    Box(
+    Row(
         modifier = Modifier
-            .size(72.dp)
             .padding(6.dp)
             .pointerInput(Unit) {
                 detectDragGestures { change, dragAmount ->
@@ -549,81 +548,76 @@ fun DraggableFloatingMicButton(
                     onDragDelta(dragAmount.x, dragAmount.y)
                 }
             },
-        contentAlignment = Alignment.Center
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        if (state == OverlayState.RECORDING) {
-            Canvas(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .scale(pulseScale)
-            ) {
-                drawCircle(
-                    color = colorScheme.error.copy(alpha = pulseAlpha),
-                    radius = size.minDimension / 2f
-                )
-            }
-        }
-
         Box(
-            modifier = Modifier
-                .size(56.dp)
-                .shadow(
-                    elevation = if (state == OverlayState.RECORDING) 12.dp else 6.dp,
-                    shape = CircleShape,
-                    spotColor = if (state == OverlayState.RECORDING) colorScheme.error else colorScheme.primary
-                )
-                .clip(CircleShape)
-                .background(backgroundColor)
-                .border(2.dp, borderColor, CircleShape)
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = onClick
-                ),
+            modifier = Modifier.size(60.dp),
             contentAlignment = Alignment.Center
         ) {
-            AnimatedContent(
-                targetState = state,
-                transitionSpec = {
-                    fadeIn(animationSpec = tween(150)) togetherWith fadeOut(animationSpec = tween(150))
-                },
-                label = "state_icon"
-            ) { targetState ->
-                when (targetState) {
-                    OverlayState.IDLE -> {
-                        Icon(
+            if (state == OverlayState.RECORDING) {
+                Canvas(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .scale(pulseScale)
+                ) {
+                    drawCircle(
+                        color = colorScheme.error.copy(alpha = pulseAlpha),
+                        radius = size.minDimension / 2f
+                    )
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .shadow(
+                        elevation = if (state == OverlayState.RECORDING) 12.dp else 6.dp,
+                        shape = CircleShape,
+                        spotColor = if (state == OverlayState.RECORDING) colorScheme.error else colorScheme.primary
+                    )
+                    .clip(CircleShape)
+                    .background(backgroundColor)
+                    .border(2.dp, borderColor, CircleShape)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onClick
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                AnimatedContent(
+                    targetState = state,
+                    transitionSpec = {
+                        fadeIn(animationSpec = tween(150)) togetherWith fadeOut(animationSpec = tween(150))
+                    },
+                    label = "state_icon"
+                ) { targetState ->
+                    when (targetState) {
+                        OverlayState.IDLE -> Icon(
                             imageVector = Icons.Rounded.Mic,
                             contentDescription = "AuraVoice Mic",
                             tint = contentColor,
                             modifier = Modifier.size(26.dp)
                         )
-                    }
-                    OverlayState.RECORDING -> {
-                        Icon(
+                        OverlayState.RECORDING -> Icon(
                             imageVector = Icons.Rounded.Stop,
                             contentDescription = "Stop Recording",
                             tint = contentColor,
                             modifier = Modifier.size(26.dp)
                         )
-                    }
-                    OverlayState.PROCESSING -> {
-                        CircularProgressIndicator(
+                        OverlayState.PROCESSING -> CircularProgressIndicator(
                             modifier = Modifier.size(26.dp),
                             color = colorScheme.primary,
                             strokeWidth = 2.5.dp,
                             strokeCap = StrokeCap.Round
                         )
-                    }
-                    OverlayState.SUCCESS -> {
-                        Icon(
+                        OverlayState.SUCCESS -> Icon(
                             imageVector = Icons.Rounded.Check,
                             contentDescription = "Text Injected",
                             tint = contentColor,
                             modifier = Modifier.size(28.dp)
                         )
-                    }
-                    OverlayState.ERROR -> {
-                        Icon(
+                        OverlayState.ERROR -> Icon(
                             imageVector = Icons.Rounded.ErrorOutline,
                             contentDescription = "Error",
                             tint = contentColor,
@@ -632,23 +626,22 @@ fun DraggableFloatingMicButton(
                     }
                 }
             }
-            }
+        }
 
-            if (state == OverlayState.ERROR && canRetry) {
-                IconButton(
-                    onClick = onRetry,
-                    modifier = Modifier
-                        .size(48.dp)
-                        .background(colorScheme.errorContainer, CircleShape)
-                        .border(2.dp, colorScheme.error, CircleShape)
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Refresh,
-                        contentDescription = "Retry dictation",
-                        tint = colorScheme.onErrorContainer,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
+        if (state == OverlayState.ERROR && canRetry) {
+            IconButton(
+                onClick = onRetry,
+                modifier = Modifier
+                    .size(48.dp)
+                    .background(colorScheme.errorContainer, CircleShape)
+                    .border(2.dp, colorScheme.error, CircleShape)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Refresh,
+                    contentDescription = "Retry dictation",
+                    tint = colorScheme.onErrorContainer,
+                    modifier = Modifier.size(24.dp)
+                )
             }
         }
     }
