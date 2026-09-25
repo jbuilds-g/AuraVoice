@@ -35,7 +35,9 @@ data class MainUiState(
     val apiKeyValidationResult: String? = null,
     val isApiKeyValid: Boolean? = null,
     val transcriptionMode: String = "smart",
-    // Sandbox Dictation State
+    val selectedModel: String = "auto",
+    val availableModels: List<String> = emptyList(),
+    val isLoadingModels: Boolean = false,
     val isSandboxRecording: Boolean = false,
     val isSandboxProcessing: Boolean = false,
     val sandboxRecordingSeconds: Int = 0,
@@ -46,26 +48,23 @@ data class MainUiState(
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
-
     private val securePreferences = SecurePreferences(application)
     private val geminiApiClient = GeminiApiClient()
     private val audioCaptureEngine = AudioCaptureEngine(application)
-
     private val _uiState = MutableStateFlow(
         MainUiState(
             apiKey = securePreferences.getApiKey(),
             hasValidApiKey = securePreferences.hasValidApiKey(),
-            transcriptionMode = securePreferences.getTranscriptionMode()
+            transcriptionMode = securePreferences.getTranscriptionMode(),
+            selectedModel = securePreferences.getSelectedModel()
         )
     )
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
-
     private var timerJob: Job? = null
     private var recordedAudioFile: File? = null
 
     init {
         refreshPermissionStates()
-
         viewModelScope.launch {
             OverlayService.isServiceRunning.collect { isRunning ->
                 _uiState.update { it.copy(isOverlayServiceRunning = isRunning) }
@@ -75,253 +74,105 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshPermissionStates() {
         val context = getApplication<Application>()
-        val hasAudio = ContextCompat.checkSelfPermission(
-            context,
-            android.Manifest.permission.RECORD_AUDIO
-        ) == PackageManager.PERMISSION_GRANTED
-
-        val hasOverlay = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            Settings.canDrawOverlays(context)
-        } else {
-            true
-        }
-
+        val hasAudio = ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        val hasOverlay = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) Settings.canDrawOverlays(context) else true
         val hasAccessibility = AuraAccessibilityService.isAccessibilitySettingsEnabled(context)
-        val validKey = securePreferences.hasValidApiKey()
-
-        _uiState.update {
-            it.copy(
-                hasAudioPermission = hasAudio,
-                hasOverlayPermission = hasOverlay,
-                hasAccessibilityPermission = hasAccessibility,
-                hasValidApiKey = validKey
-            )
-        }
+        _uiState.update { it.copy(hasAudioPermission = hasAudio, hasOverlayPermission = hasOverlay, hasAccessibilityPermission = hasAccessibility, hasValidApiKey = securePreferences.hasValidApiKey()) }
     }
 
-    fun updateApiKey(newKey: String) {
-        _uiState.update {
-            it.copy(
-                apiKey = newKey,
-                apiKeyValidationResult = null,
-                isApiKeyValid = null
-            )
-        }
-    }
+    fun updateApiKey(newKey: String) { _uiState.update { it.copy(apiKey = newKey, apiKeyValidationResult = null, isApiKeyValid = null) } }
 
     fun validateAndSaveApiKey() {
         val key = _uiState.value.apiKey.trim()
         if (key.isBlank()) {
-            _uiState.update {
-                it.copy(
-                    apiKeyValidationResult = "API Key cannot be blank.",
-                    isApiKeyValid = false,
-                    hasValidApiKey = false
-                )
-            }
+            _uiState.update { it.copy(apiKeyValidationResult = "API Key cannot be blank.", isApiKeyValid = false, hasValidApiKey = false) }
             return
         }
-
         _uiState.update { it.copy(isValidatingApiKey = true, apiKeyValidationResult = null) }
-
         viewModelScope.launch {
             val result = geminiApiClient.testApiKey(key)
             if (result.isSuccess) {
                 securePreferences.setApiKey(key)
-                _uiState.update {
-                    it.copy(
-                        isValidatingApiKey = false,
-                        apiKeyValidationResult = "API Key validated & securely encrypted with AES-256!",
-                        isApiKeyValid = true,
-                        hasValidApiKey = true
-                    )
-                }
+                _uiState.update { it.copy(isValidatingApiKey = false, apiKeyValidationResult = "API Key validated & securely encrypted with AES-256!", isApiKeyValid = true, hasValidApiKey = true) }
+                loadAvailableModels()
             } else {
                 val err = result.exceptionOrNull()?.message ?: "Validation failed"
-                _uiState.update {
-                    it.copy(
-                        isValidatingApiKey = false,
-                        apiKeyValidationResult = "Validation failed: $err",
-                        isApiKeyValid = false,
-                        hasValidApiKey = false
-                    )
-                }
+                _uiState.update { it.copy(isValidatingApiKey = false, apiKeyValidationResult = "Validation failed: $err", isApiKeyValid = false, hasValidApiKey = false) }
             }
         }
     }
 
-    fun setTranscriptionMode(mode: String) {
-        securePreferences.setTranscriptionMode(mode)
-        _uiState.update { it.copy(transcriptionMode = mode) }
+    fun loadAvailableModels(forceRefresh: Boolean = false) {
+        val key = securePreferences.getApiKey()
+        if (key.isBlank()) return
+        _uiState.update { it.copy(isLoadingModels = true) }
+        viewModelScope.launch {
+            val result = geminiApiClient.getAvailableFlashModels(key, forceRefresh)
+            _uiState.update {
+                it.copy(
+                    isLoadingModels = false,
+                    availableModels = result.getOrElse { emptyList() }
+                )
+            }
+        }
     }
+
+    fun setSelectedModel(model: String) {
+        securePreferences.setSelectedModel(model)
+        _uiState.update { it.copy(selectedModel = model) }
+    }
+
+    fun setTranscriptionMode(mode: String) { securePreferences.setTranscriptionMode(mode); _uiState.update { it.copy(transcriptionMode = mode) } }
 
     fun toggleOverlayService(enable: Boolean) {
         val context = getApplication<Application>()
         if (enable) {
-            if (!_uiState.value.hasAudioPermission || !_uiState.value.hasOverlayPermission) {
-                _uiState.update { it.copy(feedbackMessage = "Please grant Microphone and Overlay permissions first.") }
-                return
-            }
-            if (!_uiState.value.hasValidApiKey) {
-                _uiState.update { it.copy(feedbackMessage = "Please enter and save your Gemini API Key first.") }
-                return
-            }
-            OverlayService.start(context)
-            securePreferences.setOverlayActive(true)
-        } else {
-            OverlayService.stop(context)
-            securePreferences.setOverlayActive(false)
-        }
+            if (!_uiState.value.hasAudioPermission || !_uiState.value.hasOverlayPermission) { _uiState.update { it.copy(feedbackMessage = "Please grant Microphone and Overlay permissions first.") }; return }
+            if (!_uiState.value.hasValidApiKey) { _uiState.update { it.copy(feedbackMessage = "Please enter and save your Gemini API Key first.") }; return }
+            OverlayService.start(context); securePreferences.setOverlayActive(true)
+        } else { OverlayService.stop(context); securePreferences.setOverlayActive(false) }
     }
-
-    // --- Sandbox Live Testing Logic with Smart Append ---
 
     fun startSandboxRecording() {
         val key = securePreferences.getApiKey()
-        if (key.isBlank()) {
-            _uiState.update {
-                it.copy(
-                    lastErrorMessage = "Please enter and save your Google AI Studio API key first.",
-                    feedbackMessage = "Please configure your Gemini API Key in settings."
-                )
-            }
-            return
-        }
-
+        if (key.isBlank()) { _uiState.update { it.copy(lastErrorMessage = "Please enter and save your Google AI Studio API key first.", feedbackMessage = "Please configure your Gemini API Key in settings.") }; return }
         val res = audioCaptureEngine.startRecording()
         if (res.isSuccess) {
             recordedAudioFile = res.getOrNull()
-            _uiState.update {
-                it.copy(
-                    isSandboxRecording = true,
-                    sandboxRecordingSeconds = 0,
-                    lastErrorMessage = null,
-                    lastAudioInfo = null,
-                    feedbackMessage = null
-                )
-            }
+            _uiState.update { it.copy(isSandboxRecording = true, sandboxRecordingSeconds = 0, lastErrorMessage = null, lastAudioInfo = null, feedbackMessage = null) }
             timerJob?.cancel()
-            timerJob = viewModelScope.launch {
-                while (true) {
-                    delay(1000)
-                    _uiState.update { it.copy(sandboxRecordingSeconds = it.sandboxRecordingSeconds + 1) }
-                }
-            }
-        } else {
-            val err = res.exceptionOrNull()?.message ?: "Microphone error"
-            _uiState.update {
-                it.copy(
-                    lastErrorMessage = "Microphone error: $err",
-                    feedbackMessage = "Microphone error: $err"
-                )
-            }
-        }
+            timerJob = viewModelScope.launch { while (true) { delay(1000); _uiState.update { it.copy(sandboxRecordingSeconds = it.sandboxRecordingSeconds + 1) } } }
+        } else { val err = res.exceptionOrNull()?.message ?: "Microphone error"; _uiState.update { it.copy(lastErrorMessage = "Microphone error: $err", feedbackMessage = "Microphone error: $err") } }
     }
 
     fun stopSandboxRecording() {
         timerJob?.cancel()
         val file = audioCaptureEngine.stopRecording()
         _uiState.update { it.copy(isSandboxRecording = false, isSandboxProcessing = true) }
-
-        if (file == null || file.length() == 0L) {
-            _uiState.update {
-                it.copy(
-                    isSandboxProcessing = false,
-                    lastErrorMessage = "No audio was captured (0 bytes). Check microphone permission or speak louder.",
-                    feedbackMessage = "No audio recorded."
-                )
-            }
-            return
-        }
-
-        val fileSizeKb = file.length() / 1024
-        val audioInfo = "Recorded ${fileSizeKb}KB (${_uiState.value.sandboxRecordingSeconds}s)"
-        _uiState.update { it.copy(lastAudioInfo = audioInfo) }
-
+        if (file == null || file.length() == 0L) { _uiState.update { it.copy(isSandboxProcessing = false, lastErrorMessage = "No audio was captured (0 bytes). Check microphone permission or speak louder.", feedbackMessage = "No audio recorded.") }; return }
+        _uiState.update { it.copy(lastAudioInfo = "Recorded ${file.length() / 1024}KB (${_uiState.value.sandboxRecordingSeconds}s)") }
         viewModelScope.launch {
-            val key = securePreferences.getApiKey()
-            val mode = _uiState.value.transcriptionMode
-            val result = geminiApiClient.transcribeAudio(key, file, mode)
-
-            // Delete temporary audio file
-            try {
-                file.delete()
-            } catch (ignored: Exception) {
-            }
-
+            val result = geminiApiClient.transcribeAudio(key = securePreferences.getApiKey(), audioFile = file, mode = _uiState.value.transcriptionMode, selectedModel = _uiState.value.selectedModel)
+            try { file.delete() } catch (_: Exception) { }
             if (result.isSuccess) {
                 val newText = (result.getOrNull() ?: "").trim()
-                if (newText.isBlank()) {
-                    _uiState.update {
-                        it.copy(
-                            isSandboxProcessing = false,
-                            lastErrorMessage = "No speech detected in audio. Please speak louder and closer to the microphone.",
-                            feedbackMessage = "No speech detected in audio."
-                        )
-                    }
-                    return@launch
-                }
-
+                if (newText.isBlank()) { _uiState.update { it.copy(isSandboxProcessing = false, lastErrorMessage = "No speech detected in audio. Please speak louder and closer to the microphone.", feedbackMessage = "No speech detected in audio.") }; return@launch }
                 _uiState.update { current ->
                     val currentText = current.sandboxTranscribedText
-                    val combined = if (currentText.isNotBlank()) {
-                        if (currentText.endsWith(" ") || currentText.endsWith("\n")) {
-                            "$currentText$newText"
-                        } else {
-                            "$currentText $newText"
-                        }
-                    } else {
-                        newText
-                    }
-                    current.copy(
-                        isSandboxProcessing = false,
-                        sandboxTranscribedText = combined,
-                        lastErrorMessage = null,
-                        feedbackMessage = "Dictated ${newText.split(" ").size} words successfully!"
-                    )
+                    val combined = if (currentText.isNotBlank()) { if (currentText.endsWith(" ") || currentText.endsWith("\n")) "$currentText$newText" else "$currentText $newText" } else newText
+                    current.copy(isSandboxProcessing = false, sandboxTranscribedText = combined, lastErrorMessage = null, feedbackMessage = "Dictated ${newText.split(" ").size} words successfully!")
                 }
             } else {
                 val err = result.exceptionOrNull()?.message ?: "Transcription error"
-                _uiState.update {
-                    it.copy(
-                        isSandboxProcessing = false,
-                        lastErrorMessage = err,
-                        feedbackMessage = "Dictation error: $err"
-                    )
-                }
+                _uiState.update { it.copy(isSandboxProcessing = false, lastErrorMessage = err, feedbackMessage = "Dictation error: $err") }
             }
         }
     }
 
-    fun updateSandboxText(newText: String) {
-        _uiState.update { it.copy(sandboxTranscribedText = newText) }
-    }
-
-    fun clearSandboxText() {
-        _uiState.update { it.copy(sandboxTranscribedText = "", lastErrorMessage = null) }
-    }
-
-    fun clearErrorMessage() {
-        _uiState.update { it.copy(lastErrorMessage = null) }
-    }
-
-    fun copySandboxText() {
-        val text = _uiState.value.sandboxTranscribedText
-        if (text.isNotBlank()) {
-            val clipboard = getApplication<Application>().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            val clip = ClipData.newPlainText("AuraVoice", text)
-            clipboard.setPrimaryClip(clip)
-            _uiState.update { it.copy(feedbackMessage = "Text copied to clipboard") }
-        }
-    }
-
-    fun clearFeedback() {
-        _uiState.update { it.copy(feedbackMessage = null) }
-    }
-
-    override fun onCleared() {
-        super.onCleared()
-        timerJob?.cancel()
-        audioCaptureEngine.cancelRecording()
-    }
+    fun updateSandboxText(newText: String) { _uiState.update { it.copy(sandboxTranscribedText = newText) } }
+    fun clearSandboxText() { _uiState.update { it.copy(sandboxTranscribedText = "", lastErrorMessage = null) } }
+    fun clearErrorMessage() { _uiState.update { it.copy(lastErrorMessage = null) } }
+    fun copySandboxText() { val text = _uiState.value.sandboxTranscribedText; if (text.isNotBlank()) { val clipboard = getApplication<Application>().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager; clipboard.setPrimaryClip(ClipData.newPlainText("AuraVoice", text)); _uiState.update { it.copy(feedbackMessage = "Text copied to clipboard") } } }
+    fun clearFeedback() { _uiState.update { it.copy(feedbackMessage = null) } }
+    override fun onCleared() { super.onCleared(); timerJob?.cancel(); audioCaptureEngine.cancelRecording() }
 }
