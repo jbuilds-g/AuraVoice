@@ -20,8 +20,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -58,6 +58,7 @@ import androidx.compose.ui.unit.sp
 import com.example.ui.components.AboutScreen
 import com.example.ui.components.ApiKeySection
 import com.example.ui.components.HeroStatusBar
+import com.example.ui.components.ModelSelectionSection
 import com.example.ui.components.VoiceSandboxSection
 import com.example.ui.theme.MyApplicationTheme
 
@@ -67,55 +68,27 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-
         setContent {
             MyApplicationTheme {
                 val uiState by viewModel.uiState.collectAsState()
                 val snackbarHostState = remember { SnackbarHostState() }
                 var showAbout by remember { mutableStateOf(false) }
-
-                val audioPermissionLauncher = rememberLauncherForActivityResult(
-                    contract = ActivityResultContracts.RequestPermission()
-                ) { isGranted ->
+                val audioPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
                     viewModel.refreshPermissionStates()
-                    if (!isGranted) {
-                        Toast.makeText(this, "Microphone permission is required for dictation", Toast.LENGTH_SHORT).show()
-                    }
+                    if (!isGranted) Toast.makeText(this, "Microphone permission is required for dictation", Toast.LENGTH_SHORT).show()
                 }
-
                 LaunchedEffect(uiState.feedbackMessage) {
-                    uiState.feedbackMessage?.let { msg ->
-                        snackbarHostState.showSnackbar(msg, duration = SnackbarDuration.Short)
-                        viewModel.clearFeedback()
-                    }
+                    uiState.feedbackMessage?.let { msg -> snackbarHostState.showSnackbar(msg, duration = SnackbarDuration.Short); viewModel.clearFeedback() }
                 }
-
-                Scaffold(
-                    modifier = Modifier.fillMaxSize(),
-                    containerColor = MaterialTheme.colorScheme.background,
-                    snackbarHost = { SnackbarHost(snackbarHostState) }
-                ) { innerPadding ->
+                Scaffold(modifier = Modifier.fillMaxSize(), containerColor = MaterialTheme.colorScheme.background, snackbarHost = { SnackbarHost(snackbarHostState) }) { innerPadding ->
                     if (showAbout) {
                         AboutScreen(
                             hasAudioPermission = uiState.hasAudioPermission,
                             hasOverlayPermission = uiState.hasOverlayPermission,
                             hasAccessibilityPermission = uiState.hasAccessibilityPermission,
-                            onRequestAudioPermission = {
-                                audioPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
-                            },
-                            onRequestOverlayPermission = {
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                                    startActivity(
-                                        Intent(
-                                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                            Uri.parse("package:$packageName")
-                                        )
-                                    )
-                                }
-                            },
-                            onRequestAccessibilityPermission = {
-                                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                            },
+                            onRequestAudioPermission = { audioPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO) },
+                            onRequestOverlayPermission = { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))) },
+                            onRequestAccessibilityPermission = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
                             onBack = { showAbout = false },
                             modifier = Modifier.fillMaxSize().padding(innerPadding)
                         )
@@ -126,13 +99,9 @@ class MainActivity : ComponentActivity() {
                             onApiKeyChange = { viewModel.updateApiKey(it) },
                             onValidateApiKey = { viewModel.validateAndSaveApiKey() },
                             onModeSelect = { viewModel.setTranscriptionMode(it) },
-                            onStartSandboxRecording = {
-                                if (!uiState.hasAudioPermission) {
-                                    audioPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
-                                } else {
-                                    viewModel.startSandboxRecording()
-                                }
-                            },
+                            onModelSelect = { viewModel.setSelectedModel(it) },
+                            onRefreshModels = { viewModel.loadAvailableModels(true) },
+                            onStartSandboxRecording = { if (!uiState.hasAudioPermission) audioPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO) else viewModel.startSandboxRecording() },
                             onStopSandboxRecording = { viewModel.stopSandboxRecording() },
                             onSandboxTextChange = { viewModel.updateSandboxText(it) },
                             onClearSandboxText = { viewModel.clearSandboxText() },
@@ -147,10 +116,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onResume() {
-        super.onResume()
-        viewModel.refreshPermissionStates()
-    }
+    override fun onResume() { super.onResume(); viewModel.refreshPermissionStates(); if (viewModel.uiState.value.hasValidApiKey) viewModel.loadAvailableModels() }
 }
 
 @Composable
@@ -160,6 +126,8 @@ fun MainScreenContent(
     onApiKeyChange: (String) -> Unit,
     onValidateApiKey: () -> Unit,
     onModeSelect: (String) -> Unit,
+    onModelSelect: (String) -> Unit,
+    onRefreshModels: () -> Unit,
     onStartSandboxRecording: () -> Unit,
     onStopSandboxRecording: () -> Unit,
     onSandboxTextChange: (String) -> Unit,
@@ -170,60 +138,14 @@ fun MainScreenContent(
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
-    val allPermissionsGranted = uiState.hasAudioPermission &&
-            uiState.hasOverlayPermission &&
-            uiState.hasAccessibilityPermission
-
+    val allPermissionsGranted = uiState.hasAudioPermission && uiState.hasOverlayPermission && uiState.hasAccessibilityPermission
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .widthIn(max = 680.dp)
-                .verticalScroll(scrollState)
-                .padding(horizontal = 20.dp, vertical = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp)
-        ) {
-            AnimatedVisibility(
-                visible = !uiState.hasValidApiKey,
-                enter = fadeIn(),
-                exit = fadeOut()
-            ) {
-                MissingApiKeyPromptCard()
-            }
-
-            HeroStatusBar(
-                isOverlayRunning = uiState.isOverlayServiceRunning,
-                allPermissionsGranted = allPermissionsGranted,
-                onToggleOverlay = onToggleOverlay,
-                onOpenAbout = onOpenAbout
-            )
-
-            ApiKeySection(
-                apiKey = uiState.apiKey,
-                onApiKeyChange = onApiKeyChange,
-                isValidating = uiState.isValidatingApiKey,
-                validationResult = uiState.apiKeyValidationResult,
-                isValidationSuccess = uiState.isApiKeyValid,
-                onValidateKey = onValidateApiKey
-            )
-
-            VoiceSandboxSection(
-                isRecording = uiState.isSandboxRecording,
-                isProcessing = uiState.isSandboxProcessing,
-                recordingTimeSeconds = uiState.sandboxRecordingSeconds,
-                transcribedText = uiState.sandboxTranscribedText,
-                onTranscribedTextChange = onSandboxTextChange,
-                selectedMode = uiState.transcriptionMode,
-                onModeSelect = onModeSelect,
-                onStartRecording = onStartSandboxRecording,
-                onStopRecording = onStopSandboxRecording,
-                onClearText = onClearSandboxText,
-                onCopyText = onCopySandboxText,
-                lastErrorMessage = uiState.lastErrorMessage,
-                lastAudioInfo = uiState.lastAudioInfo,
-                onDismissError = onDismissSandboxError
-            )
-
+        Column(modifier = Modifier.fillMaxWidth().widthIn(max = 680.dp).verticalScroll(scrollState).padding(horizontal = 20.dp, vertical = 20.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+            AnimatedVisibility(visible = !uiState.hasValidApiKey, enter = fadeIn(), exit = fadeOut()) { MissingApiKeyPromptCard() }
+            HeroStatusBar(isOverlayRunning = uiState.isOverlayServiceRunning, allPermissionsGranted = allPermissionsGranted, onToggleOverlay = onToggleOverlay, onOpenAbout = onOpenAbout)
+            ApiKeySection(apiKey = uiState.apiKey, onApiKeyChange = onApiKeyChange, isValidating = uiState.isValidatingApiKey, validationResult = uiState.apiKeyValidationResult, isValidationSuccess = uiState.isApiKeyValid, onValidateKey = onValidateApiKey)
+            ModelSelectionSection(selectedModel = uiState.selectedModel, models = uiState.availableModels, onModelSelect = onModelSelect, modifier = Modifier.fillMaxWidth())
+            VoiceSandboxSection(isRecording = uiState.isSandboxRecording, isProcessing = uiState.isSandboxProcessing, recordingTimeSeconds = uiState.sandboxRecordingSeconds, transcribedText = uiState.sandboxTranscribedText, onTranscribedTextChange = onSandboxTextChange, selectedMode = uiState.transcriptionMode, onModeSelect = onModeSelect, onStartRecording = onStartSandboxRecording, onStopRecording = onStopSandboxRecording, onClearText = onClearSandboxText, onCopyText = onCopySandboxText, lastErrorMessage = uiState.lastErrorMessage, lastAudioInfo = uiState.lastAudioInfo, onDismissError = onDismissSandboxError)
             Spacer(modifier = Modifier.height(24.dp))
         }
     }
@@ -232,46 +154,15 @@ fun MainScreenContent(
 @Composable
 fun MissingApiKeyPromptCard(modifier: Modifier = Modifier) {
     val colorScheme = MaterialTheme.colorScheme
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = colorScheme.errorContainer),
-        border = androidx.compose.foundation.BorderStroke(1.5.dp, colorScheme.error.copy(alpha = 0.6f))
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(42.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(colorScheme.error.copy(alpha = 0.15f))
-                    .border(1.dp, colorScheme.error.copy(alpha = 0.4f), RoundedCornerShape(12.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.Key,
-                    contentDescription = null,
-                    tint = colorScheme.error,
-                    modifier = Modifier.size(22.dp)
-                )
+    Card(modifier = modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = colorScheme.errorContainer), border = androidx.compose.foundation.BorderStroke(1.5.dp, colorScheme.error.copy(alpha = 0.6f))) {
+        Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Box(modifier = Modifier.size(42.dp).clip(RoundedCornerShape(12.dp)).background(colorScheme.error.copy(alpha = 0.15f)).border(1.dp, colorScheme.error.copy(alpha = 0.4f), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
+                Icon(imageVector = Icons.Rounded.Key, contentDescription = null, tint = colorScheme.error, modifier = Modifier.size(22.dp))
             }
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Gemini API Key Required",
-                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                    color = colorScheme.onErrorContainer
-                )
+                Text(text = "Gemini API Key Required", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold), color = colorScheme.onErrorContainer)
                 Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = "AuraVoice requires a Google AI Studio API key to transcribe speech. Please enter and save your key below to activate dictation.",
-                    style = MaterialTheme.typography.bodySmall.copy(
-                        color = colorScheme.onErrorContainer.copy(alpha = 0.9f),
-                        lineHeight = 16.sp
-                    )
-                )
+                Text(text = "AuraVoice requires a Google AI Studio API key to transcribe speech. Please enter and save your key below to activate dictation.", style = MaterialTheme.typography.bodySmall.copy(color = colorScheme.onErrorContainer.copy(alpha = 0.9f), lineHeight = 16.sp))
             }
         }
     }
