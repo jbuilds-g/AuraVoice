@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -26,21 +27,51 @@ fun ModelSelectionSection(
     modifier: Modifier = Modifier
 ) {
     var expanded by remember { mutableStateOf(false) }
+
     Card(modifier = modifier.fillMaxWidth(), colors = CardDefaults.cardColors()) {
-        Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
             Text("Gemini Model")
-            androidx.compose.foundation.layout.Box(modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
+            Box(modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(
+                    onClick = { expanded = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
                     Text(if (selectedModel == "auto") "Auto (latest stable Flash)" else selectedModel)
                 }
-                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                    DropdownMenuItem(text = { Text("Auto (latest stable Flash)") }, onClick = { onModelSelect("auto"); expanded = false })
+                DropdownMenu(
+                    expanded = expanded,
+                    onDismissRequest = { expanded = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Auto (latest stable Flash)") },
+                        onClick = {
+                            onModelSelect("auto")
+                            expanded = false
+                        }
+                    )
                     models.forEach { model ->
-                        DropdownMenuItem(text = { Text(model) }, onClick = { onModelSelect(model); expanded = false })
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    if (model == "gemini-3.5-transcribe") {
+                                        "Gemini 3.5 Transcribe"
+                                    } else {
+                                        model
+                                    }
+                                )
+                            },
+                            onClick = {
+                                onModelSelect(model)
+                                expanded = false
+                            }
+                        )
                     }
                 }
             }
-            Text("Auto keeps the app on the newest compatible stable Flash model. You can override it here.")
+            Text("Choose a model for dictation, or let AuraVoice use the newest stable Flash model.")
         }
     }
 }
