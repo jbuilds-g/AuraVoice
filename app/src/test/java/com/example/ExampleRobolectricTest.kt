@@ -35,12 +35,10 @@ class ExampleRobolectricTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val securePreferences = SecurePreferences(context)
 
-        // Initial state is blank
         securePreferences.clearApiKey()
         assertEquals("", securePreferences.getApiKey())
         assertFalse(securePreferences.hasValidApiKey())
 
-        // Save key
         securePreferences.setApiKey("test_ai_studio_api_key_aura")
         assertEquals("test_ai_studio_api_key_aura", securePreferences.getApiKey())
         assertTrue(securePreferences.hasValidApiKey())
@@ -51,30 +49,28 @@ class ExampleRobolectricTest {
         securePreferences.setOverlayActive(true)
         assertEquals(true, securePreferences.isOverlayActive())
 
-        // Clear key
         securePreferences.clearApiKey()
         assertEquals("", securePreferences.getApiKey())
         assertFalse(securePreferences.hasValidApiKey())
     }
 
     @Test
-    fun `gemini client throws IllegalStateException when api key is blank`() {
+    fun `gemini client handles blank api key consistently`() {
         val client = GeminiApiClient()
         val dummyFile = File("dummy.m4a")
 
-        val exception1 = assertThrows(IllegalStateException::class.java) {
+        val exception = assertThrows(IllegalStateException::class.java) {
             runBlocking {
                 client.transcribeAudio("", dummyFile)
             }
         }
-        assertEquals("No API key configured.", exception1.message)
+        assertEquals("No API key configured.", exception.message)
 
-        val exception2 = assertThrows(IllegalStateException::class.java) {
-            runBlocking {
-                client.testApiKey("   ")
-            }
+        val validationResult = runBlocking {
+            client.testApiKey("   ")
         }
-        assertEquals("No API key configured.", exception2.message)
+        assertTrue(validationResult.isFailure)
+        assertEquals("No API key configured.", validationResult.exceptionOrNull()?.message)
     }
 
     @Test
