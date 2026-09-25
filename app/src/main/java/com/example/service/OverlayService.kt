@@ -91,7 +91,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlin.math.hypot
 import java.io.File
 
@@ -145,18 +144,6 @@ class OverlayService : Service() {
     private lateinit var audioCaptureEngine: AudioCaptureEngine
     private lateinit var sensorManager: SensorManager
     private var shakeSensor: Sensor? = null
-    private val geminiApiClient = GeminiApiClient()
-    private var retryFile: File? = null
-    private var dismissTargetView: ComposeView? = null
-    private var dismissTargetParams: WindowManager.LayoutParams? = null
-    private var isFloatingButtonDismissed = false
-    private var isDraggingOverlay = false
-    private val _isOverDismissTarget = MutableStateFlow(false)
-    private var shakePeakActive = false
-    private var shakePulseCount = 0
-    private var lastShakePulseAt = 0L
-    private var shakeCooldownUntil = 0L
-
     private val shakeListener = object : SensorEventListener {
         override fun onSensorChanged(event: SensorEvent) {
             if (!isFloatingButtonDismissed || event.values.size < 3) return
@@ -174,6 +161,18 @@ class OverlayService : Service() {
         }
         override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
     }
+
+    private val geminiApiClient = GeminiApiClient()
+    private var retryFile: File? = null
+    private var dismissTargetView: ComposeView? = null
+    private var dismissTargetParams: WindowManager.LayoutParams? = null
+    private var isFloatingButtonDismissed = false
+    private var isDraggingOverlay = false
+    private val _isOverDismissTarget = MutableStateFlow(false)
+    private var shakePeakActive = false
+    private var shakePulseCount = 0
+    private var lastShakePulseAt = 0L
+    private var shakeCooldownUntil = 0L
 
     override fun onCreate() {
         super.onCreate()
@@ -337,8 +336,10 @@ class OverlayService : Service() {
     }
 
     private suspend fun processAudioFile(file: File) {
-        val apiKey = securePreferences.getApiKey(); val mode = securePreferences.getTranscriptionMode()
-        val result = geminiApiClient.transcribeAudio(apiKey, file, mode)
+        val apiKey = securePreferences.getApiKey()
+        val mode = securePreferences.getTranscriptionMode()
+        val selectedModel = securePreferences.getSelectedModel()
+        val result = geminiApiClient.transcribeAudio(apiKey, file, mode, selectedModel)
         if (result.isSuccess) {
             val text = (result.getOrNull() ?: "").trim()
             if (text.isBlank()) {
