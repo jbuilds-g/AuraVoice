@@ -8,6 +8,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenu
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.OutlinedTextField
@@ -29,20 +30,10 @@ fun ModelSelectionSection(
     modifier: Modifier = Modifier
 ) {
     var expanded by remember { mutableStateOf(false) }
-
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors()
-    ) {
-        Column(
-            modifier = Modifier.padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
+    Card(modifier = modifier.fillMaxWidth(), colors = CardDefaults.cardColors()) {
+        Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Gemini Model")
-            ExposedDropdownMenuBox(
-                expanded = expanded,
-                onExpandedChange = { expanded = !expanded }
-            ) {
+            ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
                 OutlinedTextField(
                     value = if (selectedModel == "auto") "Auto (latest stable Flash)" else selectedModel,
                     onValueChange = {},
@@ -51,25 +42,10 @@ fun ModelSelectionSection(
                     label = { Text("Model") },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) }
                 )
-                ExposedDropdownMenu(
-                    expanded = expanded,
-                    onDismissRequest = { expanded = false }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("Auto (latest stable Flash)") },
-                        onClick = {
-                            onModelSelect("auto")
-                            expanded = false
-                        }
-                    )
+                ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                    DropdownMenuItem(text = { Text("Auto (latest stable Flash)") }, onClick = { onModelSelect("auto"); expanded = false })
                     models.forEach { model ->
-                        DropdownMenuItem(
-                            text = { Text(model) },
-                            onClick = {
-                                onModelSelect(model)
-                                expanded = false
-                            }
-                        )
+                        DropdownMenuItem(text = { Text(model) }, onClick = { onModelSelect(model); expanded = false })
                     }
                 }
             }
