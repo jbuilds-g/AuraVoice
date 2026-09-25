@@ -103,16 +103,38 @@ class GeminiApiClient {
         return try {
             val isTranscribeModel = model == "gemini-3.5-transcribe"
             val promptText = if (mode.equals("verbatim", ignoreCase = true)) {
-                "Transcribe this audio exactly as spoken. Preserve filler words, repetitions, false starts, and the speaker's wording. " +
-                    "Do not clean up, summarize, paraphrase, infer missing words, or add commentary. " +
-                    "If there is no intelligible speech, return an empty response. Output ONLY the transcript."
+                """
+                Transcribe the attached audio exactly as spoken.
+                Preserve the speaker's words, including filler words, repetitions, false starts, slang, and informal phrasing.
+                Do not clean up, rewrite, summarize, paraphrase, infer, or improve anything.
+                Do not add or remove meaning.
+                Return only the spoken transcript. Do not add labels, explanations, quotes, or commentary.
+                If there is no intelligible speech, return an empty response.
+                """.trimIndent()
             } else {
-                "You are a voice dictation transcription engine. Listen carefully to the audio and convert the user's speech into clean, ready-to-use text. " +
-                    "Remove filler words, stutters, and obvious false starts. Resolve spoken self-corrections while preserving the user's final intended wording. " +
-                    "Fix grammar, punctuation, capitalization, sentence structure, and obvious transcription mistakes. " +
-                    "Preserve names, technical terms, URLs, email addresses, numbers, and other meaningful details exactly when they are clearly spoken. " +
-                    "Do not summarize, paraphrase, invent, explain, or describe the audio. Do not add information. " +
-                    "If there is no intelligible speech, return an empty response. Output ONLY the final dictated text."
+                """
+                You are a high-accuracy voice dictation engine. The attached audio is raw speech that the user wants converted into polished text for immediate insertion into a text field.
+
+                TRANSCRIPTION RULES:
+                - First understand what the speaker actually said. Use the full audio and surrounding context to resolve words that were misheard or transcribed incorrectly.
+                - Remove verbal filler that does not carry meaning, including "um", "uh", "like" when used as a filler, "you know", "I mean", and similar speech disfluencies.
+                - Remove stutters, repeated words caused by hesitation, abandoned phrases, and false starts when the speaker clearly continues with a correction.
+                - Keep intentional repetition when it is clearly part of the meaning or emphasis.
+                - Apply natural grammar, punctuation, capitalization, paragraph breaks, and sentence boundaries.
+                - Correct obvious speech-to-text mistakes using context, especially homophones and words that do not make sense in the surrounding sentence.
+                - Preserve the speaker's intended wording and tone. Do not make the text sound more formal than the speaker intended.
+                - Preserve names, usernames, product names, technical terminology, acronyms, URLs, email addresses, numbers, dates, and other specific details when they are clearly spoken.
+                - Do not censor, sanitize, summarize, shorten, or rewrite the speaker's message.
+                - Never invent facts, words, names, or details that are not supported by the audio.
+                - If a phrase is genuinely unclear, use the most acoustically plausible interpretation supported by context rather than silently inventing a different idea.
+
+                OUTPUT RULES:
+                - Return ONLY the final polished dictated text.
+                - Do not describe the audio or explain corrections.
+                - Do not say "Here is the transcription" or add any other wrapper text.
+                - Do not use quotation marks around the entire response unless the speaker actually dictated them.
+                - If there is no intelligible speech, return an empty response.
+                """.trimIndent()
             }
 
             val audioPart = JSONObject().apply {
