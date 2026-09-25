@@ -27,14 +27,14 @@ class GeminiApiClient {
     }
 
     private val client = OkHttpClient.Builder().connectTimeout(30, TimeUnit.SECONDS).readTimeout(45, TimeUnit.SECONDS).writeTimeout(30, TimeUnit.SECONDS).build()
-    @Volatile private var cachedModel: String? = null
+    @Volatile private var cachedModels: List<String>? = null
     @Volatile private var modelCacheTimestamp = 0L
 
     suspend fun transcribeAudio(context: Context, audioFile: File, mode: String = "smart"): Result<String> {
-        val apiKey = SecurePreferences(context).getApiKey()
-        val selectedModel = SecurePreferences(context).getSelectedModel()
+        val prefs = SecurePreferences(context)
+        val apiKey = prefs.getApiKey()
         if (apiKey.isBlank()) throw IllegalStateException("No API key configured.")
-        return transcribeAudio(apiKey, audioFile, mode, selectedModel)
+        return transcribeAudio(apiKey, audioFile, mode, prefs.getSelectedModel())
     }
 
     suspend fun transcribeAudio(apiKey: String, audioFile: File, mode: String = "smart", selectedModel: String = "auto"): Result<String> = withContext(Dispatchers.IO) {
@@ -113,7 +113,8 @@ class GeminiApiClient {
 
     private fun fetchFlashModels(apiKey: String, forceRefresh: Boolean): List<String> {
         val now = System.currentTimeMillis()
-        if (!forceRefresh && cachedModel != null && now - modelCacheTimestamp < MODEL_CACHE_MS) return listOf(cachedModel!!)
+        val cached = cachedModels
+        if (!forceRefresh && cached != null && now - modelCacheTimestamp < MODEL_CACHE_MS) return cached
         val request = Request.Builder().url("$MODELS_ENDPOINT?key=$apiKey").get().build()
         client.newCall(request).execute().use { response ->
             val body = response.body?.string() ?: ""
@@ -127,17 +128,14 @@ class GeminiApiClient {
                 val supports = methods?.let { a -> (0 until a.length()).any { a.optString(it) == "generateContent" } } == true
                 if (supports && isStableFlashModel(name)) candidates += name
             }
-            return candidates.distinct().sortedWith(compareByDescending<String> { flashModelVersion(it) }.thenBy { it })
+            val sorted = candidates.distinct().sortedWith(compareByDescending<String> { flashModelVersion(it) }.thenBy { it })
+            cachedModels = sorted
+            modelCacheTimestamp = now
+            return sorted
         }
     }
 
-    private fun discoverLatestFlashModel(apiKey: String): String {
-        val models = fetchFlashModels(apiKey, false)
-        val selected = models.firstOrNull() ?: DEFAULT_MODEL
-        cachedModel = selected
-        modelCacheTimestamp = System.currentTimeMillis()
-        return selected
-    }
+    private fun discoverLatestFlashModel(apiKey: String): String = fetchFlashModels(apiKey, false).firstOrNull() ?: DEFAULT_MODEL
 
     private fun isStableFlashModel(name: String): Boolean {
         val normalized = name.lowercase()
