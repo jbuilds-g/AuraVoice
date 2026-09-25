@@ -32,6 +32,7 @@ class SecurePreferences(context: Context) {
         private const val KEY_TRANSCRIPTION_MODE = "transcription_mode"
         private const val KEY_HAPTIC_FEEDBACK = "haptic_feedback"
         private const val KEY_SELECTED_MODEL = "selected_model"
+        private const val DEFAULT_MODEL = "gemini-3.5-flash-lite"
     }
 
     fun getApiKey(): String = prefs.getString(KEY_API_KEY, "") ?: ""
@@ -64,7 +65,10 @@ class SecurePreferences(context: Context) {
         prefs.edit().putBoolean(KEY_HAPTIC_FEEDBACK, enabled).apply()
     }
 
-    fun getSelectedModel(): String = prefs.getString(KEY_SELECTED_MODEL, "auto") ?: "auto"
+    fun getSelectedModel(): String {
+        val stored = prefs.getString(KEY_SELECTED_MODEL, DEFAULT_MODEL) ?: DEFAULT_MODEL
+        return if (stored == "auto") DEFAULT_MODEL else stored
+    }
 
     fun setSelectedModel(model: String) {
         prefs.edit().putString(KEY_SELECTED_MODEL, model).apply()
