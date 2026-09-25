@@ -22,7 +22,7 @@ class GeminiApiClient {
         private const val TAG = "GeminiApiClient"
         private const val API_BASE = "https://generativelanguage.googleapis.com/v1beta"
         private const val MODELS_ENDPOINT = "$API_BASE/models"
-        private const val DEFAULT_MODEL = "gemini-3.8-flash"
+        private const val DEFAULT_MODEL = "gemini-3.5-flash-lite"
         private const val MODEL_CACHE_MS = 6 * 60 * 60 * 1000L
     }
 
@@ -46,7 +46,7 @@ class GeminiApiClient {
         apiKey: String,
         audioFile: File,
         mode: String = "smart",
-        selectedModel: String = "auto"
+        selectedModel: String = DEFAULT_MODEL
     ): Result<String> = withContext(Dispatchers.IO) {
         if (apiKey.isBlank()) throw IllegalStateException("No API key configured.")
         if (!audioFile.exists() || audioFile.length() == 0L) {
@@ -57,7 +57,7 @@ class GeminiApiClient {
 
         DiagnosticLog.add("Transcription started (mode: ${mode.lowercase()})")
         try {
-            val model = resolveSelectedModel(apiKey, selectedModel)
+            val model = if (selectedModel == "auto") DEFAULT_MODEL else selectedModel.removePrefix("models/")
             DiagnosticLog.add("Using Gemini model: $model")
             val base64Audio = Base64.encodeToString(audioFile.readBytes(), Base64.NO_WRAP)
             val result = executeAudioRequest(model, apiKey, base64Audio, mode)
@@ -192,11 +192,6 @@ class GeminiApiClient {
         }
     }
 
-    private fun resolveSelectedModel(apiKey: String, selectedModel: String): String {
-        if (selectedModel != "auto") return selectedModel.removePrefix("models/")
-        return discoverLatestFlashModel(apiKey)
-    }
-
     private fun fetchFlashModels(apiKey: String, forceRefresh: Boolean): List<String> {
         val now = System.currentTimeMillis()
         val cached = cachedModels
@@ -232,9 +227,6 @@ class GeminiApiClient {
             return sorted
         }
     }
-
-    private fun discoverLatestFlashModel(apiKey: String): String =
-        fetchFlashModels(apiKey, false).firstOrNull { it.contains("-flash") } ?: DEFAULT_MODEL
 
     private fun isSupportedDictationModel(name: String): Boolean {
         val normalized = name.lowercase()
