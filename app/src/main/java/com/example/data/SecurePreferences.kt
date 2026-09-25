@@ -6,8 +6,7 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 
 /**
- * SecurePreferences manages sensitive application configuration using AES-256 GCM encryption.
- * The API key is initialized to a blank string ("") and contains zero hardcoded defaults or fallbacks.
+ * SecurePreferences manages application configuration using encrypted preferences.
  */
 class SecurePreferences(context: Context) {
 
@@ -32,19 +31,12 @@ class SecurePreferences(context: Context) {
         private const val KEY_OVERLAY_ACTIVE = "overlay_active"
         private const val KEY_TRANSCRIPTION_MODE = "transcription_mode"
         private const val KEY_HAPTIC_FEEDBACK = "haptic_feedback"
+        private const val KEY_SELECTED_MODEL = "selected_model"
     }
 
-    /**
-     * Retrieves the API key purely from EncryptedSharedPreferences.
-     * Initialized to empty string ("") with zero hardcoded keys or build fallbacks.
-     */
-    fun getApiKey(): String {
-        return prefs.getString(KEY_API_KEY, "") ?: ""
-    }
+    fun getApiKey(): String = prefs.getString(KEY_API_KEY, "") ?: ""
 
-    fun hasValidApiKey(): Boolean {
-        return getApiKey().isNotBlank()
-    }
+    fun hasValidApiKey(): Boolean = getApiKey().isNotBlank()
 
     fun setApiKey(key: String) {
         prefs.edit().putString(KEY_API_KEY, key.trim()).apply()
@@ -54,27 +46,27 @@ class SecurePreferences(context: Context) {
         prefs.edit().putString(KEY_API_KEY, "").apply()
     }
 
-    fun isOverlayActive(): Boolean {
-        return prefs.getBoolean(KEY_OVERLAY_ACTIVE, false)
-    }
+    fun isOverlayActive(): Boolean = prefs.getBoolean(KEY_OVERLAY_ACTIVE, false)
 
     fun setOverlayActive(active: Boolean) {
         prefs.edit().putBoolean(KEY_OVERLAY_ACTIVE, active).apply()
     }
 
-    fun getTranscriptionMode(): String {
-        return prefs.getString(KEY_TRANSCRIPTION_MODE, "smart") ?: "smart"
-    }
+    fun getTranscriptionMode(): String = prefs.getString(KEY_TRANSCRIPTION_MODE, "smart") ?: "smart"
 
     fun setTranscriptionMode(mode: String) {
         prefs.edit().putString(KEY_TRANSCRIPTION_MODE, mode).apply()
     }
 
-    fun isHapticEnabled(): Boolean {
-        return prefs.getBoolean(KEY_HAPTIC_FEEDBACK, true)
-    }
+    fun isHapticEnabled(): Boolean = prefs.getBoolean(KEY_HAPTIC_FEEDBACK, true)
 
     fun setHapticEnabled(enabled: Boolean) {
         prefs.edit().putBoolean(KEY_HAPTIC_FEEDBACK, enabled).apply()
+    }
+
+    fun getSelectedModel(): String = prefs.getString(KEY_SELECTED_MODEL, "auto") ?: "auto"
+
+    fun setSelectedModel(model: String) {
+        prefs.edit().putString(KEY_SELECTED_MODEL, model).apply()
     }
 }
