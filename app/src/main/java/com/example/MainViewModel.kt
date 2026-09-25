@@ -109,10 +109,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val result = geminiApiClient.getAvailableFlashModels(key, forceRefresh)
             _uiState.update {
-                it.copy(
-                    isLoadingModels = false,
-                    availableModels = result.getOrElse { emptyList() }
-                )
+                it.copy(isLoadingModels = false, availableModels = result.getOrElse { emptyList() })
             }
         }
     }
@@ -152,7 +149,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (file == null || file.length() == 0L) { _uiState.update { it.copy(isSandboxProcessing = false, lastErrorMessage = "No audio was captured (0 bytes). Check microphone permission or speak louder.", feedbackMessage = "No audio recorded.") }; return }
         _uiState.update { it.copy(lastAudioInfo = "Recorded ${file.length() / 1024}KB (${_uiState.value.sandboxRecordingSeconds}s)") }
         viewModelScope.launch {
-            val result = geminiApiClient.transcribeAudio(key = securePreferences.getApiKey(), audioFile = file, mode = _uiState.value.transcriptionMode, selectedModel = _uiState.value.selectedModel)
+            val result = geminiApiClient.transcribeAudio(apiKey = securePreferences.getApiKey(), audioFile = file, mode = _uiState.value.transcriptionMode, selectedModel = _uiState.value.selectedModel)
             try { file.delete() } catch (_: Exception) { }
             if (result.isSuccess) {
                 val newText = (result.getOrNull() ?: "").trim()
