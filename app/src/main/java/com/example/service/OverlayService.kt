@@ -398,9 +398,6 @@ fun DraggableFloatingMicButton(
     onRetry: () -> Unit
 ) {
     val colorScheme = MaterialTheme.colorScheme
-    val infiniteTransition = rememberInfiniteTransition(label = "overlay_pulse")
-    val pulseScale by infiniteTransition.animateFloat(1.0f, 1.25f, infiniteRepeatable(tween(800, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "pulse_scale")
-    val pulseAlpha by infiniteTransition.animateFloat(0.5f, 0.05f, infiniteRepeatable(tween(800, easing = LinearEasing), RepeatMode.Reverse), label = "pulse_alpha")
     val backgroundColor by animateColorAsState(when (state) { OverlayState.IDLE -> colorScheme.primaryContainer; OverlayState.RECORDING -> colorScheme.error; OverlayState.PROCESSING -> colorScheme.surfaceContainerHighest; OverlayState.SUCCESS -> colorScheme.primary; OverlayState.ERROR -> colorScheme.errorContainer }, tween(250), label = "bg_color")
     val borderColor by animateColorAsState(when (state) { OverlayState.IDLE -> colorScheme.primary; OverlayState.RECORDING -> colorScheme.errorContainer; OverlayState.PROCESSING -> colorScheme.primary; OverlayState.SUCCESS -> colorScheme.onPrimary; OverlayState.ERROR -> colorScheme.error }, tween(250), label = "border_color")
     val contentColor = when (state) { OverlayState.IDLE -> colorScheme.onPrimaryContainer; OverlayState.RECORDING -> colorScheme.onError; OverlayState.PROCESSING -> colorScheme.primary; OverlayState.SUCCESS -> colorScheme.onPrimary; OverlayState.ERROR -> colorScheme.onErrorContainer }
@@ -413,7 +410,7 @@ fun DraggableFloatingMicButton(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(modifier = Modifier.size(60.dp), contentAlignment = Alignment.Center) {
-            if (state == OverlayState.RECORDING) Canvas(modifier = Modifier.fillMaxSize().scale(pulseScale)) { drawCircle(colorScheme.error.copy(alpha = pulseAlpha), radius = size.minDimension / 2f) }
+            if (state == OverlayState.RECORDING) RecordingPulse(colorScheme)
             Box(
                 modifier = Modifier.size(56.dp).shadow(if (state == OverlayState.RECORDING) 12.dp else 6.dp, CircleShape, spotColor = if (state == OverlayState.RECORDING) colorScheme.error else colorScheme.primary).clip(CircleShape).background(backgroundColor).border(2.dp, borderColor, CircleShape).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, enabled = !cooldownActive, onClick = onClick),
                 contentAlignment = Alignment.Center
@@ -439,6 +436,36 @@ fun DraggableFloatingMicButton(
                 Icon(Icons.Rounded.Refresh, "Retry dictation", tint = colorScheme.onErrorContainer, modifier = Modifier.size(24.dp))
             }
         }
+    }
+}
+
+@Composable
+private fun RecordingPulse(colorScheme: androidx.compose.material3.ColorScheme) {
+    val infiniteTransition = rememberInfiniteTransition(label = "recording_pulse")
+    val pulseScale by infiniteTransition.animateFloat(
+        1.0f,
+        1.25f,
+        infiniteRepeatable(
+            tween(800, easing = FastOutSlowInEasing),
+            RepeatMode.Reverse
+        ),
+        label = "pulse_scale"
+    )
+    val pulseAlpha by infiniteTransition.animateFloat(
+        0.5f,
+        0.05f,
+        infiniteRepeatable(
+            tween(800, easing = LinearEasing),
+            RepeatMode.Reverse
+        ),
+        label = "pulse_alpha"
+    )
+
+    Canvas(modifier = Modifier.fillMaxSize().scale(pulseScale)) {
+        drawCircle(
+            colorScheme.error.copy(alpha = pulseAlpha),
+            radius = size.minDimension / 2f
+        )
     }
 }
 
