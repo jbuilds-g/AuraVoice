@@ -3,6 +3,8 @@ package com.example.ui.components
 import androidx.compose.foundation.BorderStroke
 import android.content.Intent
 import android.net.Uri
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
@@ -48,6 +50,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.graphics.asImageBitmap
 import com.example.BuildConfig
 import com.example.R
 import androidx.compose.ui.Alignment
@@ -70,6 +73,13 @@ fun AboutScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val appIcon = remember {
+        val drawable = context.getDrawable(R.mipmap.ic_launcher)
+        Bitmap.createBitmap(104, 104, Bitmap.Config.ARGB_8888).also { bitmap ->
+            drawable?.setBounds(0, 0, bitmap.width, bitmap.height)
+            drawable?.draw(Canvas(bitmap))
+        }
+    }.asImageBitmap()
     val colorScheme = MaterialTheme.colorScheme
     val scrollState = rememberScrollState()
     val logEntries by DiagnosticLog.entries.collectAsState()
@@ -106,11 +116,10 @@ fun AboutScreen(
                         modifier = Modifier.size(104.dp).clip(RoundedCornerShape(16.dp)).background(colorScheme.primaryContainer),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            painter = painterResource(id = R.drawable.ic_launcher_foreground),
-                            contentDescription = null,
-                            tint = colorScheme.onPrimaryContainer,
-                            modifier = Modifier.fillMaxSize().padding(8.dp)
+                        androidx.compose.foundation.Image(
+                            bitmap = appIcon,
+                            contentDescription = "AuraVoice app icon",
+                            modifier = Modifier.fillMaxSize()
                         )
                     }
                     Spacer(modifier = Modifier.width(16.dp))
