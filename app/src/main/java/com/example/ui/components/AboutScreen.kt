@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -141,8 +143,8 @@ fun AboutScreen(
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                painter = painterResource(id = R.drawable.ic_github),
-                                contentDescription = null,
+                                imageVector = Icons.Rounded.Info,
+                                contentDescription = "GitHub profile",
                                 tint = colorScheme.onSecondaryContainer,
                                 modifier = Modifier.padding(12.dp)
                             )
@@ -167,7 +169,7 @@ fun AboutScreen(
                         modifier = Modifier.weight(1f),
                         shape = MaterialTheme.shapes.medium
                     ) {
-                        Icon(painter = painterResource(id = R.drawable.ic_github), contentDescription = null, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Rounded.Info, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("View Source", maxLines = 1)
                     }
