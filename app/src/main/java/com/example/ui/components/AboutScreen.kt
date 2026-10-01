@@ -226,7 +226,12 @@ fun AboutScreen(
             onDismissRequest = { showLicenseDialog = false },
             title = { Text("MIT License") },
             text = {
-                Column(modifier = Modifier.fillMaxWidth().height(420.dp).verticalScroll(rememberScrollState())) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(420.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
                     Text(
                         """MIT License
 
@@ -253,7 +258,11 @@ SOFTWARE.""",
                     )
                 }
             },
-            confirmButton = { TextButton(onClick = { showLicenseDialog = false }) { Text("Done") } }
+            confirmButton = {
+                TextButton(onClick = { showLicenseDialog = false }) {
+                    Text("Done")
+                }
+            }
         )
     }
 
