@@ -219,7 +219,6 @@ fun AboutScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
     }
-}
 
     if (showLicenseDialog) {
         AlertDialog(
@@ -265,6 +264,7 @@ SOFTWARE.""",
             }
         )
     }
+}
 
 @Composable
 private fun AboutArchitectureCard(modifier: Modifier = Modifier) {
