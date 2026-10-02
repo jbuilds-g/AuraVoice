@@ -4,7 +4,20 @@
     android:height="108dp"
     android:viewportWidth="432"
     android:viewportHeight="432">
+
     <path
-        android:fillColor="@color/voflow_icon_foreground"
-        android:pathData="M 91.0,120.1 L 95.2,126.5 L 115.4,127.5 L 130.2,139.2 L 169.4,212.3 L 186.3,212.3 L 196.9,192.2 L 209.6,231.4 L 214.9,232.5 L 222.4,225.0 L 230.8,173.1 L 238.2,218.7 L 244.6,231.4 L 255.2,229.3 L 263.7,195.4 L 267.9,194.3 L 273.2,209.1 L 282.7,216.6 L 234.0,304.5 L 223.4,300.3 L 184.2,224.0 L 174.7,222.9 L 213.9,300.3 L 227.7,313.0 L 235.1,313.0 L 246.7,303.5 L 341.0,122.2 L 338.9,118.0 L 332.5,120.1 L 290.2,202.8 L 282.7,207.0 L 274.3,189.0 L 263.7,183.7 L 256.3,192.2 L 248.8,222.9 L 239.3,168.9 L 227.7,163.6 L 221.3,175.2 L 213.9,222.9 L 201.2,184.8 L 190.6,185.8 L 182.1,204.9 L 174.7,206.0 L 132.3,128.6 L 115.4,119.1 Z" />
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="@color/voflow_icon_foreground"
+        android:strokeWidth="18"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M 72,216
+            C 88,216 96,216 108,216
+            C 122,216 128,150 142,150
+            C 156,150 160,282 176,282
+            C 192,282 196,116 212,116
+            C 228,116 232,316 248,316
+            C 264,316 268,150 284,150
+            C 300,150 304,216 318,216
+            C 332,216 340,216 360,216" />
 </vector>
