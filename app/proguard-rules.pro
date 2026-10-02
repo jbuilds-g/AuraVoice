@@ -19,3 +19,11 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# OkHttp references optional TLS provider implementations that are not packaged.
+-dontwarn org.bouncycastle.jsse.**
+-dontwarn org.conscrypt.**
+-dontwarn org.openjsse.**
+
+# Tink references optional Error Prone annotations that are not packaged.
+-dontwarn com.google.errorprone.annotations.**

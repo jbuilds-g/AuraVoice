@@ -6,6 +6,10 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.graphics.PixelFormat
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -37,18 +41,21 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Mic
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -72,6 +79,7 @@ import com.example.MainActivity
 import com.example.R
 import com.example.audio.AudioCaptureEngine
 import com.example.data.GeminiApiClient
+import com.example.data.QuotaCooldownController
 import com.example.data.SecurePreferences
 import com.example.ui.theme.MyApplicationTheme
 import kotlinx.coroutines.CoroutineScope
@@ -83,7 +91,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import kotlin.math.hypot
 import java.io.File
 
 enum class OverlayState {
@@ -94,49 +102,33 @@ enum class OverlayState {
     ERROR
 }
 
-/**
- * OverlayService renders the floating microphone button using Material 3 Expressive dynamic tokens:
- * - Dynamic Visibility: Automatically hides (View.GONE) when not typing, and appears (View.VISIBLE) when node.isEditable == true.
- * - Draggable Overlay: Real-time pointerInput drag tracking across the display.
- * - Dynamic API Key Security: Loads user key purely from EncryptedSharedPreferences without hardcoded secrets.
- */
 class OverlayService : Service() {
-
     companion object {
         private const val TAG = "OverlayService"
         private const val NOTIFICATION_ID = 1001
+        private const val DISMISS_TARGET_SIZE_DP = 76
+        private const val DISMISS_TARGET_BOTTOM_MARGIN_DP = 72
+        private const val DISMISS_ZONE_RADIUS_DP = 92
+        private const val SHAKE_THRESHOLD = 11f
+        private const val SHAKE_RELEASE_THRESHOLD = 7f
+        private const val SHAKE_WINDOW_MS = 700L
+        private const val SHAKE_COOLDOWN_MS = 1200L
 
         private val _overlayState = MutableStateFlow(OverlayState.IDLE)
         val overlayState: StateFlow<OverlayState> = _overlayState.asStateFlow()
-
         private val _isServiceRunning = MutableStateFlow(false)
         val isServiceRunning: StateFlow<Boolean> = _isServiceRunning.asStateFlow()
-
         private val _isEditableFocused = MutableStateFlow(false)
         val isEditableFocused: StateFlow<Boolean> = _isEditableFocused.asStateFlow()
-
-        @Volatile
-        private var activeServiceInstance: OverlayService? = null
+        private val _canRetry = MutableStateFlow(false)
+        val canRetry: StateFlow<Boolean> = _canRetry.asStateFlow()
+        @Volatile private var activeServiceInstance: OverlayService? = null
 
         fun start(context: Context) {
             val intent = Intent(context, OverlayService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent) else context.startService(intent)
         }
-
-        fun stop(context: Context) {
-            val intent = Intent(context, OverlayService::class.java)
-            context.stopService(intent)
-        }
-
-        /**
-         * Invoked by AuraAccessibilityService when focus changes.
-         * Sets floating overlay button to VISIBLE only when node.isEditable == true.
-         * Automatically sets overlay visibility to GONE when no editable field is focused.
-         */
+        fun stop(context: Context) = context.stopService(Intent(context, OverlayService::class.java))
         fun updateEditableFocusState(isEditable: Boolean) {
             _isEditableFocused.value = isEditable
             activeServiceInstance?.applyVisibilityRules()
@@ -148,34 +140,58 @@ class OverlayService : Service() {
     private lateinit var windowManager: WindowManager
     private var composeView: ComposeView? = null
     private var lifecycleOwner: OverlayLifecycleOwner? = null
-
     private lateinit var securePreferences: SecurePreferences
     private lateinit var audioCaptureEngine: AudioCaptureEngine
+    private lateinit var sensorManager: SensorManager
+    private var shakeSensor: Sensor? = null
+    private val shakeListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) {
+            if (!isFloatingButtonDismissed || event.values.size < 3) return
+            val magnitude = hypot(hypot(event.values[0].toDouble(), event.values[1].toDouble()), event.values[2].toDouble()).toFloat()
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (magnitude >= SHAKE_THRESHOLD && !shakePeakActive) {
+                shakePeakActive = true
+                shakePulseCount = if (now - lastShakePulseAt <= SHAKE_WINDOW_MS) shakePulseCount + 1 else 1
+                lastShakePulseAt = now
+                if (shakePulseCount >= 2 && now >= shakeCooldownUntil) {
+                    restoreFloatingButton()
+                    shakeCooldownUntil = now + SHAKE_COOLDOWN_MS
+                }
+            } else if (magnitude <= SHAKE_RELEASE_THRESHOLD) shakePeakActive = false
+        }
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+    }
+
     private val geminiApiClient = GeminiApiClient()
+    private var retryFile: File? = null
+    private var dismissTargetView: ComposeView? = null
+    private var dismissTargetParams: WindowManager.LayoutParams? = null
+    private var isFloatingButtonDismissed = false
+    private var isDraggingOverlay = false
+    private val _isOverDismissTarget = MutableStateFlow(false)
+    private var shakePeakActive = false
+    private var shakePulseCount = 0
+    private var lastShakePulseAt = 0L
+    private var shakeCooldownUntil = 0L
 
     override fun onCreate() {
         super.onCreate()
         activeServiceInstance = this
         _isServiceRunning.value = true
         _overlayState.value = OverlayState.IDLE
-
         securePreferences = SecurePreferences(this)
         audioCaptureEngine = AudioCaptureEngine(this)
+        sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        shakeSensor = sensorManager.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION) ?: sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-
         startForeground(NOTIFICATION_ID, buildNotification())
         initOverlayView()
+        initDismissTargetView()
         Log.d(TAG, "OverlayService active.")
     }
 
     private fun buildNotification(): Notification {
-        val pendingIntent = PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-
+        val pendingIntent = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         return NotificationCompat.Builder(this, FlowApplication.OVERLAY_CHANNEL_ID)
             .setContentTitle("AuraVoice Dictation Active")
             .setContentText("Appears automatically when typing. Tap to dictate.")
@@ -187,409 +203,278 @@ class OverlayService : Service() {
     }
 
     private fun initOverlayView() {
-        lifecycleOwner = OverlayLifecycleOwner().apply {
-            onCreate()
-            onStart()
-        }
-
-        val layoutParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-            PixelFormat.TRANSLUCENT
-        ).apply {
+        lifecycleOwner = OverlayLifecycleOwner().apply { onCreate(); onStart() }
+        val layoutParams = WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS, PixelFormat.TRANSLUCENT).apply {
             gravity = Gravity.TOP or Gravity.START
             x = 40
             y = 500
         }
-
         val view = ComposeView(this).apply {
             setViewTreeLifecycleOwner(lifecycleOwner)
             setViewTreeSavedStateRegistryOwner(lifecycleOwner)
             setViewTreeViewModelStoreOwner(lifecycleOwner)
-
             setContent {
                 MyApplicationTheme {
                     val state by _overlayState.collectAsState()
+                    val canRetry by _canRetry.collectAsState()
+                    val cooldownSeconds by QuotaCooldownController.remainingSeconds.collectAsState()
                     DraggableFloatingMicButton(
                         state = state,
+                        canRetry = canRetry,
+                        cooldownSeconds = cooldownSeconds,
+                        onDragStart = { beginOverlayDrag() },
                         onDragDelta = { dx, dy ->
-                            layoutParams.x += dx.toInt()
-                            layoutParams.y += dy.toInt()
-                            try {
-                                windowManager.updateViewLayout(this, layoutParams)
-                            } catch (e: Exception) {
-                                Log.e(TAG, "Failed updating overlay layout position", e)
-                            }
+                            layoutParams.x += dx.toInt(); layoutParams.y += dy.toInt()
+                            try { windowManager.updateViewLayout(this, layoutParams); updateDismissTargetHoverState() } catch (e: Exception) { Log.e(TAG, "Failed updating overlay layout position", e) }
                         },
-                        onClick = { onMicButtonClicked() }
+                        onDragEnd = { finishOverlayDrag() },
+                        onDragCancel = { finishOverlayDrag() },
+                        onClick = { onMicButtonClicked() },
+                        onRetry = { retryLastAttempt() }
                     )
                 }
             }
         }
-
-        try {
-            windowManager.addView(view, layoutParams)
-            composeView = view
-            applyVisibilityRules()
-        } catch (e: Exception) {
-            Log.e(TAG, "Error adding overlay ComposeView to WindowManager", e)
-        }
+        try { windowManager.addView(view, layoutParams); composeView = view; applyVisibilityRules() } catch (e: Exception) { Log.e(TAG, "Error adding overlay ComposeView to WindowManager", e) }
     }
 
-    /**
-     * Controls Dynamic Visibility:
-     * - VISIBLE only when node.isEditable == true.
-     * - Automatically set to GONE when no editable field is focused so it doesn't float around permanently.
-     * - Preserves visibility during active RECORDING or PROCESSING sessions.
-     */
+    private fun initDismissTargetView() {
+        val density = resources.displayMetrics.density
+        val targetSize = (DISMISS_TARGET_SIZE_DP * density).toInt()
+        val bottomMargin = (DISMISS_TARGET_BOTTOM_MARGIN_DP * density).toInt()
+        val target = ComposeView(this).apply {
+            setViewTreeLifecycleOwner(lifecycleOwner); setViewTreeSavedStateRegistryOwner(lifecycleOwner); setViewTreeViewModelStoreOwner(lifecycleOwner)
+            setContent { MyApplicationTheme { val isOverDismissTarget by _isOverDismissTarget.collectAsState(); DismissTarget(isActive = isOverDismissTarget) } }
+        }
+        val targetParams = WindowManager.LayoutParams(targetSize, targetSize, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE, PixelFormat.TRANSLUCENT).apply {
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL; y = bottomMargin
+        }
+        try { windowManager.addView(target, targetParams); target.visibility = View.GONE; dismissTargetView = target; dismissTargetParams = targetParams } catch (e: Exception) { Log.e(TAG, "Error adding dismiss target overlay", e) }
+    }
+
+    private fun beginOverlayDrag() { if (isFloatingButtonDismissed) return; isDraggingOverlay = true; _isOverDismissTarget.value = false; showDismissTarget() }
+    private fun finishOverlayDrag() {
+        if (!isDraggingOverlay) return
+        isDraggingOverlay = false
+        val shouldDismiss = _isOverDismissTarget.value && _overlayState.value == OverlayState.IDLE
+        _isOverDismissTarget.value = false; hideDismissTarget()
+        if (shouldDismiss) dismissFloatingButton()
+    }
+    private fun updateDismissTargetHoverState() {
+        if (!isDraggingOverlay) return
+        mainHandler.post {
+            val button = composeView ?: return@post; val target = dismissTargetView ?: return@post
+            if (button.visibility != View.VISIBLE || target.visibility != View.VISIBLE) return@post
+            val buttonLocation = IntArray(2); val targetLocation = IntArray(2)
+            button.getLocationOnScreen(buttonLocation); target.getLocationOnScreen(targetLocation)
+            val buttonCenterX = buttonLocation[0] + button.width / 2f; val buttonCenterY = buttonLocation[1] + button.height / 2f
+            val targetCenterX = targetLocation[0] + target.width / 2f; val targetCenterY = targetLocation[1] + target.height / 2f
+            val distance = hypot((buttonCenterX - targetCenterX).toDouble(), (buttonCenterY - targetCenterY).toDouble())
+            val hovered = distance <= DISMISS_ZONE_RADIUS_DP * resources.displayMetrics.density
+            if (hovered != _isOverDismissTarget.value) _isOverDismissTarget.value = hovered
+        }
+    }
+    private fun showDismissTarget() { val target = dismissTargetView ?: return; positionDismissTarget(); target.visibility = View.VISIBLE }
+    private fun positionDismissTarget() {
+        val target = dismissTargetView ?: return; val params = dismissTargetParams ?: return
+        val density = resources.displayMetrics.density; val edgeMargin = (16 * density).toInt(); val keyboardGap = (24 * density).toInt(); val targetSize = params.height
+        val screenHeight = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) windowManager.currentWindowMetrics.bounds.height() else resources.displayMetrics.heightPixels
+        val keyboardTop = AuraAccessibilityService.instance?.getInputMethodTop()
+        val targetTop = if (keyboardTop != null && keyboardTop > targetSize + keyboardGap) keyboardTop - targetSize - keyboardGap else screenHeight - targetSize - (DISMISS_TARGET_BOTTOM_MARGIN_DP * density).toInt()
+        params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; params.y = targetTop.coerceAtLeast(edgeMargin)
+        try { windowManager.updateViewLayout(target, params) } catch (e: Exception) { Log.w(TAG, "Failed positioning dismiss target", e) }
+    }
+    private fun hideDismissTarget() { _isOverDismissTarget.value = false; dismissTargetView?.visibility = View.GONE }
+    private fun dismissFloatingButton() { isFloatingButtonDismissed = true; _isOverDismissTarget.value = false; composeView?.visibility = View.GONE; startShakeDetection(); triggerHaptic(); Log.d(TAG, "Floating mic dismissed; shake detection enabled.") }
+    private fun restoreFloatingButton() { mainHandler.post { if (!isFloatingButtonDismissed) return@post; isFloatingButtonDismissed = false; shakePulseCount = 0; lastShakePulseAt = 0L; shakePeakActive = false; stopShakeDetection(); triggerHaptic(); applyVisibilityRules(); Log.d(TAG, "Floating mic restored by shake.") } }
+    private fun startShakeDetection() { val sensor = shakeSensor ?: return; shakePulseCount = 0; lastShakePulseAt = 0L; shakePeakActive = false; try { sensorManager.registerListener(shakeListener, sensor, SensorManager.SENSOR_DELAY_GAME) } catch (e: Exception) { Log.e(TAG, "Failed to register shake sensor listener", e) } }
+    private fun stopShakeDetection() { try { sensorManager.unregisterListener(shakeListener) } catch (e: Exception) { Log.w(TAG, "Failed to unregister shake sensor listener", e) }; shakePulseCount = 0; lastShakePulseAt = 0L; shakePeakActive = false }
+
     fun applyVisibilityRules() {
         mainHandler.post {
             val view = composeView ?: return@post
-
-            if (_overlayState.value != OverlayState.IDLE) {
-                view.visibility = View.VISIBLE
-                return@post
-            }
-
-            val isEditable = _isEditableFocused.value
-            view.visibility = if (isEditable) View.VISIBLE else View.GONE
+            if (isFloatingButtonDismissed) { view.visibility = View.GONE; return@post }
+            if (_overlayState.value != OverlayState.IDLE) { view.visibility = View.VISIBLE; return@post }
+            view.visibility = if (_isEditableFocused.value) View.VISIBLE else View.GONE
         }
     }
 
     private fun onMicButtonClicked() {
+        if (QuotaCooldownController.remainingSeconds.value > 0) return
         when (_overlayState.value) {
             OverlayState.IDLE -> startRecording()
             OverlayState.RECORDING -> stopRecordingAndProcess()
-            OverlayState.PROCESSING -> {
-                // Ignore click during model processing
-            }
-            OverlayState.SUCCESS, OverlayState.ERROR -> {
-                _overlayState.value = OverlayState.IDLE
-                applyVisibilityRules()
-            }
+            OverlayState.PROCESSING -> Unit
+            OverlayState.SUCCESS, OverlayState.ERROR -> { _overlayState.value = OverlayState.IDLE; applyVisibilityRules() }
         }
     }
 
     private fun triggerHaptic() {
         if (!securePreferences.isHapticEnabled()) return
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
-                vibratorManager.defaultVibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK))
-            } else {
-                @Suppress("DEPRECATION")
-                val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    vibrator.vibrate(VibrationEffect.createOneShot(40, VibrationEffect.DEFAULT_AMPLITUDE))
-                } else {
-                    @Suppress("DEPRECATION")
-                    vibrator.vibrate(40)
-                }
-            }
-        } catch (e: Exception) {
-            // ignore
-        }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) (getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK))
+            else { @Suppress("DEPRECATION") val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator; if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) vibrator.vibrate(VibrationEffect.createOneShot(40, VibrationEffect.DEFAULT_AMPLITUDE)) else { @Suppress("DEPRECATION") vibrator.vibrate(40) } }
+        } catch (_: Exception) { }
     }
 
     private fun startRecording() {
+        retryFile?.let { if (it.exists()) it.delete() }; retryFile = null; _canRetry.value = false
         val apiKey = securePreferences.getApiKey()
         if (apiKey.isBlank()) {
-            Toast.makeText(this, "No API key configured. Please set one in AuraVoice.", Toast.LENGTH_LONG).show()
-            _overlayState.value = OverlayState.ERROR
-            serviceScope.launch {
-                delay(2000)
-                _overlayState.value = OverlayState.IDLE
-                applyVisibilityRules()
-            }
-            return
+            _overlayState.value = OverlayState.ERROR; Log.w(TAG, "Cannot record: no API key configured."); applyVisibilityRules(); return
         }
-
         val result = audioCaptureEngine.startRecording()
-        if (result.isSuccess) {
-            triggerHaptic()
-            _overlayState.value = OverlayState.RECORDING
-            Log.d(TAG, "Recording started via floating overlay")
-        } else {
-            Toast.makeText(this, "Microphone error: ${result.exceptionOrNull()?.message}", Toast.LENGTH_SHORT).show()
-            _overlayState.value = OverlayState.ERROR
-            serviceScope.launch {
-                delay(1500)
-                _overlayState.value = OverlayState.IDLE
-                applyVisibilityRules()
-            }
-        }
+        if (result.isSuccess) { triggerHaptic(); _overlayState.value = OverlayState.RECORDING; Log.d(TAG, "Recording started via floating overlay") }
+        else { Log.e(TAG, "Microphone error: ${result.exceptionOrNull()?.message}"); _overlayState.value = OverlayState.ERROR; applyVisibilityRules() }
     }
 
     private fun stopRecordingAndProcess() {
-        triggerHaptic()
-        _overlayState.value = OverlayState.PROCESSING
+        triggerHaptic(); _overlayState.value = OverlayState.PROCESSING
         val recordedFile = audioCaptureEngine.stopRecording()
-
-        if (recordedFile == null) {
-            Toast.makeText(this, "No audio captured", Toast.LENGTH_SHORT).show()
-            _overlayState.value = OverlayState.ERROR
-            serviceScope.launch {
-                delay(1500)
-                _overlayState.value = OverlayState.IDLE
-                applyVisibilityRules()
-            }
-            return
-        }
-
-        serviceScope.launch {
-            processAudioFile(recordedFile)
-        }
+        if (recordedFile == null) { Log.w(TAG, "No audio captured"); _overlayState.value = OverlayState.ERROR; applyVisibilityRules(); return }
+        serviceScope.launch { processAudioFile(recordedFile) }
     }
 
     private suspend fun processAudioFile(file: File) {
         val apiKey = securePreferences.getApiKey()
         val mode = securePreferences.getTranscriptionMode()
-
-        val result = geminiApiClient.transcribeAudio(apiKey, file, mode)
-
-        // Delete audio cache file after processing
-        try {
-            file.delete()
-        } catch (ignored: Exception) {
-        }
-
+        val selectedModel = securePreferences.getSelectedModel()
+        val result = geminiApiClient.transcribeAudio(apiKey, file, mode, selectedModel)
         if (result.isSuccess) {
             val text = (result.getOrNull() ?: "").trim()
             if (text.isBlank()) {
-                Log.w(TAG, "Transcription returned empty string")
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(this@OverlayService, "AuraVoice: No speech detected in recording.", Toast.LENGTH_SHORT).show()
-                }
-                _overlayState.value = OverlayState.ERROR
-                delay(1500)
-                _overlayState.value = OverlayState.IDLE
-                applyVisibilityRules()
+                Log.w(TAG, "Transcription returned empty string; treating as no speech detected.")
+                file.delete(); retryFile = null; _canRetry.value = false; _overlayState.value = OverlayState.ERROR; applyVisibilityRules()
+                serviceScope.launch { delay(1800); if (_overlayState.value == OverlayState.ERROR && !_canRetry.value) { _overlayState.value = OverlayState.IDLE; applyVisibilityRules() } }
                 return
             }
-
             Log.d(TAG, "Transcription succeeded: $text")
-
             val accessibilityService = AuraAccessibilityService.instance
-            if (accessibilityService != null) {
-                accessibilityService.injectOrAppendTranscribedText(text)
-                withContext(Dispatchers.Main) {
-                    val preview = if (text.length > 35) "${text.take(35)}..." else text
-                    Toast.makeText(this@OverlayService, "Dictated: \"$preview\"", Toast.LENGTH_SHORT).show()
-                }
-            } else {
-                withContext(Dispatchers.Main) {
-                    val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                    val clip = android.content.ClipData.newPlainText("AuraVoice", text)
-                    clipboard.setPrimaryClip(clip)
-                    Toast.makeText(this@OverlayService, "Text copied to clipboard", Toast.LENGTH_SHORT).show()
-                }
-            }
-
-            _overlayState.value = OverlayState.SUCCESS
-            delay(1200)
-            _overlayState.value = OverlayState.IDLE
-            applyVisibilityRules()
-
+            if (accessibilityService != null) accessibilityService.injectOrAppendTranscribedText(text)
+            else { val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager; clipboard.setPrimaryClip(android.content.ClipData.newPlainText("AuraVoice", text)) }
+            file.delete(); retryFile = null; _canRetry.value = false; _overlayState.value = OverlayState.SUCCESS; delay(1200); _overlayState.value = OverlayState.IDLE; applyVisibilityRules()
         } else {
-            val errorMsg = result.exceptionOrNull()?.message ?: "Transcription failed"
-            Log.e(TAG, "Transcription error: $errorMsg")
-            withContext(Dispatchers.Main) {
-                Toast.makeText(this@OverlayService, "Dictation Error: $errorMsg", Toast.LENGTH_LONG).show()
+            val exception = result.exceptionOrNull(); val errorMsg = exception?.message ?: "Transcription failed"
+            if (exception is GeminiApiClient.NoSpeechDetectedException) {
+                Log.i(TAG, "No speech detected; retry disabled because there is no recording to retry.")
+                file.delete(); retryFile = null; _canRetry.value = false; _overlayState.value = OverlayState.ERROR; applyVisibilityRules()
+                serviceScope.launch { delay(1800); if (_overlayState.value == OverlayState.ERROR && !_canRetry.value) { _overlayState.value = OverlayState.IDLE; applyVisibilityRules() } }
+                return
             }
-            _overlayState.value = OverlayState.ERROR
-            delay(2000)
-            _overlayState.value = OverlayState.IDLE
-            applyVisibilityRules()
+            Log.e(TAG, "Transcription error: $errorMsg")
+            retryFile = file; _canRetry.value = true; _overlayState.value = OverlayState.ERROR; applyVisibilityRules()
         }
+    }
+
+    private fun retryLastAttempt() {
+        if (QuotaCooldownController.remainingSeconds.value > 0) return
+        val file = retryFile
+        if (file == null || !file.exists()) { retryFile = null; _canRetry.value = false; _overlayState.value = OverlayState.IDLE; applyVisibilityRules(); return }
+        triggerHaptic(); _overlayState.value = OverlayState.PROCESSING; serviceScope.launch { processAudioFile(file) }
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        if (activeServiceInstance == this) {
-            activeServiceInstance = null
-        }
-        _isServiceRunning.value = false
-        _overlayState.value = OverlayState.IDLE
-        serviceScope.cancel()
-
-        audioCaptureEngine.cancelRecording()
-
-        composeView?.let {
-            try {
-                windowManager.removeView(it)
-            } catch (e: Exception) {
-                // ignore
-            }
-        }
-        composeView = null
-
-        lifecycleOwner?.onStop()
-        lifecycleOwner?.onDestroy()
-        lifecycleOwner = null
-
+        if (activeServiceInstance == this) activeServiceInstance = null
+        _isServiceRunning.value = false; _overlayState.value = OverlayState.IDLE; serviceScope.cancel(); stopShakeDetection(); hideDismissTarget(); audioCaptureEngine.cancelRecording()
+        composeView?.let { try { windowManager.removeView(it) } catch (_: Exception) { } }; composeView = null
+        dismissTargetView?.let { try { windowManager.removeView(it) } catch (_: Exception) { } }; dismissTargetView = null; dismissTargetParams = null
+        lifecycleOwner?.onStop(); lifecycleOwner?.onDestroy(); lifecycleOwner = null
         Log.d(TAG, "OverlayService stopped.")
     }
-
     override fun onBind(intent: Intent?): IBinder? = null
 }
 
 @Composable
 fun DraggableFloatingMicButton(
     state: OverlayState,
+    canRetry: Boolean,
+    cooldownSeconds: Int,
+    onDragStart: () -> Unit,
     onDragDelta: (Float, Float) -> Unit,
-    onClick: () -> Unit
+    onDragEnd: () -> Unit,
+    onDragCancel: () -> Unit,
+    onClick: () -> Unit,
+    onRetry: () -> Unit
 ) {
     val colorScheme = MaterialTheme.colorScheme
-    val infiniteTransition = rememberInfiniteTransition(label = "overlay_pulse")
+    val backgroundColor by animateColorAsState(when (state) { OverlayState.IDLE -> colorScheme.primaryContainer; OverlayState.RECORDING -> colorScheme.error; OverlayState.PROCESSING -> colorScheme.surfaceContainerHighest; OverlayState.SUCCESS -> colorScheme.primary; OverlayState.ERROR -> colorScheme.errorContainer }, tween(250), label = "bg_color")
+    val borderColor by animateColorAsState(when (state) { OverlayState.IDLE -> colorScheme.primary; OverlayState.RECORDING -> colorScheme.errorContainer; OverlayState.PROCESSING -> colorScheme.primary; OverlayState.SUCCESS -> colorScheme.onPrimary; OverlayState.ERROR -> colorScheme.error }, tween(250), label = "border_color")
+    val contentColor = when (state) { OverlayState.IDLE -> colorScheme.onPrimaryContainer; OverlayState.RECORDING -> colorScheme.onError; OverlayState.PROCESSING -> colorScheme.primary; OverlayState.SUCCESS -> colorScheme.onPrimary; OverlayState.ERROR -> colorScheme.onErrorContainer }
+    val cooldownActive = cooldownSeconds > 0
 
+    Row(
+        modifier = Modifier.padding(6.dp).pointerInput(Unit) {
+            detectDragGestures(onDragStart = { onDragStart() }, onDragEnd = { onDragEnd() }, onDragCancel = { onDragCancel() }) { change, dragAmount -> change.consume(); onDragDelta(dragAmount.x, dragAmount.y) }
+        },
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(modifier = Modifier.size(60.dp), contentAlignment = Alignment.Center) {
+            if (state == OverlayState.RECORDING) RecordingPulse(colorScheme)
+            Box(
+                modifier = Modifier.size(56.dp).shadow(if (state == OverlayState.RECORDING) 12.dp else 6.dp, CircleShape, spotColor = if (state == OverlayState.RECORDING) colorScheme.error else colorScheme.primary).clip(CircleShape).background(backgroundColor).border(2.dp, borderColor, CircleShape).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, enabled = !cooldownActive, onClick = onClick),
+                contentAlignment = Alignment.Center
+            ) {
+                AnimatedContent(targetState = state, transitionSpec = { fadeIn(tween(150)) togetherWith fadeOut(tween(150)) }, label = "state_icon") { targetState ->
+                    when (targetState) {
+                        OverlayState.IDLE -> Icon(Icons.Rounded.Mic, "AuraVoice Mic", tint = contentColor, modifier = Modifier.size(26.dp))
+                        OverlayState.RECORDING -> Icon(Icons.Rounded.Stop, "Stop Recording", tint = contentColor, modifier = Modifier.size(26.dp))
+                        OverlayState.PROCESSING -> CircularProgressIndicator(Modifier.size(26.dp), color = colorScheme.primary, strokeWidth = 2.5.dp, strokeCap = StrokeCap.Round)
+                        OverlayState.SUCCESS -> Icon(Icons.Rounded.Check, "Text Injected", tint = contentColor, modifier = Modifier.size(28.dp))
+                        OverlayState.ERROR -> Icon(Icons.Rounded.ErrorOutline, "Error", tint = contentColor, modifier = Modifier.size(26.dp))
+                    }
+                }
+            }
+        }
+
+        if (cooldownActive) {
+            androidx.compose.material3.Surface(shape = CircleShape, color = colorScheme.surfaceContainerHighest, contentColor = colorScheme.onSurface, tonalElevation = 3.dp) {
+                androidx.compose.material3.Text("${cooldownSeconds}s", modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp), style = MaterialTheme.typography.labelMedium)
+            }
+        } else if (state == OverlayState.ERROR && canRetry) {
+            IconButton(onClick = onRetry, modifier = Modifier.size(48.dp).background(colorScheme.errorContainer, CircleShape).border(2.dp, colorScheme.error, CircleShape)) {
+                Icon(Icons.Rounded.Refresh, "Retry dictation", tint = colorScheme.onErrorContainer, modifier = Modifier.size(24.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecordingPulse(colorScheme: androidx.compose.material3.ColorScheme) {
+    val infiniteTransition = rememberInfiniteTransition(label = "recording_pulse")
     val pulseScale by infiniteTransition.animateFloat(
-        initialValue = 1.0f,
-        targetValue = 1.25f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(800, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
+        1.0f,
+        1.25f,
+        infiniteRepeatable(
+            tween(800, easing = FastOutSlowInEasing),
+            RepeatMode.Reverse
         ),
         label = "pulse_scale"
     )
-
     val pulseAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.5f,
-        targetValue = 0.05f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(800, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
+        0.5f,
+        0.05f,
+        infiniteRepeatable(
+            tween(800, easing = LinearEasing),
+            RepeatMode.Reverse
         ),
         label = "pulse_alpha"
     )
 
-    val backgroundColor by animateColorAsState(
-        targetValue = when (state) {
-            OverlayState.IDLE -> colorScheme.primaryContainer
-            OverlayState.RECORDING -> colorScheme.error
-            OverlayState.PROCESSING -> colorScheme.surfaceContainerHighest
-            OverlayState.SUCCESS -> colorScheme.primary
-            OverlayState.ERROR -> colorScheme.errorContainer
-        },
-        animationSpec = tween(250),
-        label = "bg_color"
-    )
-
-    val borderColor by animateColorAsState(
-        targetValue = when (state) {
-            OverlayState.IDLE -> colorScheme.primary
-            OverlayState.RECORDING -> colorScheme.errorContainer
-            OverlayState.PROCESSING -> colorScheme.primary
-            OverlayState.SUCCESS -> colorScheme.onPrimary
-            OverlayState.ERROR -> colorScheme.error
-        },
-        animationSpec = tween(250),
-        label = "border_color"
-    )
-
-    val contentColor = when (state) {
-        OverlayState.IDLE -> colorScheme.onPrimaryContainer
-        OverlayState.RECORDING -> colorScheme.onError
-        OverlayState.PROCESSING -> colorScheme.primary
-        OverlayState.SUCCESS -> colorScheme.onPrimary
-        OverlayState.ERROR -> colorScheme.onErrorContainer
+    Canvas(modifier = Modifier.fillMaxSize().scale(pulseScale)) {
+        drawCircle(
+            colorScheme.error.copy(alpha = pulseAlpha),
+            radius = size.minDimension / 2f
+        )
     }
+}
 
-    Box(
-        modifier = Modifier
-            .size(72.dp)
-            .padding(6.dp)
-            .pointerInput(Unit) {
-                detectDragGestures { change, dragAmount ->
-                    change.consume()
-                    onDragDelta(dragAmount.x, dragAmount.y)
-                }
-            },
-        contentAlignment = Alignment.Center
-    ) {
-        if (state == OverlayState.RECORDING) {
-            Canvas(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .scale(pulseScale)
-            ) {
-                drawCircle(
-                    color = colorScheme.error.copy(alpha = pulseAlpha),
-                    radius = size.minDimension / 2f
-                )
-            }
-        }
-
-        Box(
-            modifier = Modifier
-                .size(56.dp)
-                .shadow(
-                    elevation = if (state == OverlayState.RECORDING) 12.dp else 6.dp,
-                    shape = CircleShape,
-                    spotColor = if (state == OverlayState.RECORDING) colorScheme.error else colorScheme.primary
-                )
-                .clip(CircleShape)
-                .background(backgroundColor)
-                .border(2.dp, borderColor, CircleShape)
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = onClick
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            AnimatedContent(
-                targetState = state,
-                transitionSpec = {
-                    fadeIn(animationSpec = tween(150)) togetherWith fadeOut(animationSpec = tween(150))
-                },
-                label = "state_icon"
-            ) { targetState ->
-                when (targetState) {
-                    OverlayState.IDLE -> {
-                        Icon(
-                            imageVector = Icons.Rounded.Mic,
-                            contentDescription = "AuraVoice Mic",
-                            tint = contentColor,
-                            modifier = Modifier.size(26.dp)
-                        )
-                    }
-                    OverlayState.RECORDING -> {
-                        Icon(
-                            imageVector = Icons.Rounded.Stop,
-                            contentDescription = "Stop Recording",
-                            tint = contentColor,
-                            modifier = Modifier.size(26.dp)
-                        )
-                    }
-                    OverlayState.PROCESSING -> {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(26.dp),
-                            color = colorScheme.primary,
-                            strokeWidth = 2.5.dp,
-                            strokeCap = StrokeCap.Round
-                        )
-                    }
-                    OverlayState.SUCCESS -> {
-                        Icon(
-                            imageVector = Icons.Rounded.Check,
-                            contentDescription = "Text Injected",
-                            tint = contentColor,
-                            modifier = Modifier.size(28.dp)
-                        )
-                    }
-                    OverlayState.ERROR -> {
-                        Icon(
-                            imageVector = Icons.Rounded.ErrorOutline,
-                            contentDescription = "Error",
-                            tint = contentColor,
-                            modifier = Modifier.size(26.dp)
-                        )
-                    }
-                }
-            }
+@Composable
+private fun DismissTarget(isActive: Boolean) {
+    val colorScheme = MaterialTheme.colorScheme
+    Box(Modifier.fillMaxSize().padding(6.dp), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(64.dp).shadow(8.dp, CircleShape, spotColor = colorScheme.error).clip(CircleShape).background(if (isActive) colorScheme.error else colorScheme.errorContainer).border(2.dp, if (isActive) colorScheme.onError else colorScheme.error, CircleShape), contentAlignment = Alignment.Center) {
+            Icon(Icons.Rounded.Close, "Dismiss floating mic", tint = if (isActive) colorScheme.onError else colorScheme.onErrorContainer, modifier = Modifier.size(30.dp))
         }
     }
 }

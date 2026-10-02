@@ -89,6 +89,7 @@ fun VoiceSandboxSection(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(
+                    modifier = Modifier.weight(1f),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
@@ -107,19 +108,21 @@ fun VoiceSandboxSection(
                         )
                     }
 
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = "Interactive Dictation Sandbox",
                             style = MaterialTheme.typography.titleMedium.copy(
                                 fontWeight = FontWeight.Bold,
                                 color = colorScheme.onSurface
-                            )
+                            ),
+                            maxLines = 1
                         )
                         Text(
                             text = "Test voice transcription directly inside the app",
                             style = MaterialTheme.typography.bodySmall.copy(
                                 color = colorScheme.onSurfaceVariant
-                            )
+                            ),
+                            maxLines = 1
                         )
                     }
                 }
@@ -159,9 +162,15 @@ fun VoiceSandboxSection(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 FilterChip(
+                    modifier = Modifier.weight(1f),
                     selected = selectedMode == "smart",
                     onClick = { onModeSelect("smart") },
-                    label = { Text("Smart (Remove Fillers & Auto-Format)") },
+                    label = {
+                        Text(
+                            text = "Smart (Remove Fillers & Auto-Format)",
+                            maxLines = 1
+                        )
+                    },
                     shape = RoundedCornerShape(10.dp),
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = colorScheme.primaryContainer,
@@ -170,9 +179,15 @@ fun VoiceSandboxSection(
                 )
 
                 FilterChip(
+                    modifier = Modifier.weight(1f),
                     selected = selectedMode == "verbatim",
                     onClick = { onModeSelect("verbatim") },
-                    label = { Text("Verbatim") },
+                    label = {
+                        Text(
+                            text = "Verbatim",
+                            maxLines = 1
+                        )
+                    },
                     shape = RoundedCornerShape(10.dp),
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = colorScheme.primaryContainer,

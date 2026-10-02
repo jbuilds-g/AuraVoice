@@ -5,6 +5,7 @@ import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.graphics.Rect
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -105,6 +106,20 @@ class AuraAccessibilityService : AccessibilityService() {
         OverlayService.updateEditableFocusState(isEditable)
     }
 
+    /**
+     * Returns the top edge of the active on-screen keyboard in screen coordinates.
+     * Used by the floating overlay to keep the drag-to-dismiss target visible above the IME.
+     */
+    fun getInputMethodTop(): Int? {
+        val inputMethodWindow = windows.firstOrNull {
+            it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD
+        } ?: return null
+
+        val bounds = Rect()
+        inputMethodWindow.getBoundsInScreen(bounds)
+        return bounds.top.takeIf { bounds.height() > 0 }
+    }
+
     override fun onInterrupt() {
         Log.w(TAG, "AuraAccessibilityService interrupted.")
     }
@@ -131,7 +146,23 @@ class AuraAccessibilityService : AccessibilityService() {
             ?: findFirstEditableNode(root)
 
         if (targetNode != null) {
-            val existingText = targetNode.text?.toString() ?: ""
+            val rawExistingText = targetNode.text?.toString() ?: ""
+            val hintText = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                targetNode.hintText?.toString()
+            } else {
+                null
+            }
+            val existingText = when {
+                rawExistingText.isBlank() -> ""
+                android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O &&
+                        targetNode.isShowingHintText -> ""
+                !hintText.isNullOrBlank() && rawExistingText == hintText -> ""
+                else -> rawExistingText
+            }
+
+            if (rawExistingText.isNotBlank() && existingText.isBlank()) {
+                Log.d(TAG, "Ignoring placeholder/hint text during dictation injection: \"$rawExistingText\"")
+            }
 
             val combinedText = if (existingText.isNotBlank()) {
                 if (existingText.endsWith(" ") || existingText.endsWith("\n")) {
