@@ -99,7 +99,7 @@ fun AboutScreen(
                 Icon(Icons.Rounded.ArrowBack, contentDescription = "Back")
             }
             Column(modifier = Modifier.weight(1f)) {
-                Text("About AuraVoice", style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold))
+                Text("About VoFlow", style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold))
                 Text("How it works, permissions, and diagnostics", style = MaterialTheme.typography.bodySmall, color = colorScheme.onSurfaceVariant)
             }
         }
@@ -118,13 +118,13 @@ fun AboutScreen(
                     ) {
                         androidx.compose.foundation.Image(
                             bitmap = appIcon,
-                            contentDescription = "AuraVoice app icon",
+                            contentDescription = "VoFlow app icon",
                             modifier = Modifier.fillMaxSize()
                         )
                     }
                     Spacer(modifier = Modifier.width(16.dp))
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("AuraVoice", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                        Text("VoFlow", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                         Text("AI Voice Dictation", style = MaterialTheme.typography.bodyMedium, color = colorScheme.onSurfaceVariant)
                     }
                     Box(
@@ -174,7 +174,7 @@ fun AboutScreen(
                         Text("MIT License", maxLines = 1)
                     }
                     OutlinedButton(
-                        onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/jbuilds-g/AuraVoice"))) },
+                        onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/jbuilds-g/VoFlow"))) },
                         modifier = Modifier.weight(1f),
                         shape = MaterialTheme.shapes.medium
                     ) {
@@ -296,10 +296,10 @@ private fun AboutArchitectureCard(modifier: Modifier = Modifier) {
                     Icon(Icons.Rounded.Info, contentDescription = null, tint = colorScheme.onPrimaryContainer)
                 }
                 Spacer(modifier = Modifier.width(12.dp))
-                Text("How AuraVoice Works", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+                Text("How VoFlow Works", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
             }
             Text(
-                text = "AuraVoice watches for editable text fields through Android Accessibility, shows the floating microphone only when typing, records your speech, and sends the audio to Gemini for transcription. Dictation is then inserted into the active field, with clipboard fallback when no field is available.",
+                text = "VoFlow watches for editable text fields through Android Accessibility, shows the floating microphone only when typing, records your speech, and sends the audio to Gemini for transcription. Dictation is then inserted into the active field, with clipboard fallback when no field is available.",
                 style = MaterialTheme.typography.bodySmall.copy(color = colorScheme.onSurfaceVariant, lineHeight = 20.sp)
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
