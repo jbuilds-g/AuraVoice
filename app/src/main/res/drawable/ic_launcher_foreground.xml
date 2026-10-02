@@ -1,8 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item
-        android:width="66dp"
-        android:height="66dp"
-        android:drawable="@drawable/ic_flow_logo"
-        android:gravity="center" />
-</layer-list>
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="432" android:viewportHeight="432">
+    <path
+        android:fillColor="#97CCDB"
+        android:pathData="M 239.7,396.0 225.2,391.1 217.9,380.8 156.8,230.2 169.8,231.2 227.1,373.0 235.1,381.3 242.0,381.3 251.5,371.1 314.2,215.5 301.2,206.7 288.6,172.0 274.5,238.0 267.2,246.3 258.8,245.3 250.0,224.3 238.9,134.8 227.1,226.3 219.8,244.4 209.9,246.3 202.6,237.0 189.2,173.0 172.4,211.1 164.8,215.0 151.0,211.1 91.0,71.7 73.1,54.6 37.9,48.7 39.4,37.0 70.8,38.9 95.6,57.0 158.7,200.3 168.2,196.9 181.6,161.2 190.8,158.3 196.9,162.2 212.9,231.7 227.8,130.4 235.1,120.1 245.0,122.1 252.3,142.1 264.2,232.6 276.0,171.5 284.0,159.3 294.0,159.3 299.7,166.6 312.3,200.3 322.6,195.9 385.3,41.4 390.3,36.0 396.0,40.4 263.0,373.0 255.0,388.2 239.7,396.0 Z" />
+</vector>
