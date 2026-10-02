@@ -324,15 +324,17 @@ private suspend fun fetchGithubProfile(login: String): GithubProfile? = withCont
             setRequestProperty("Accept", "application/vnd.github+json")
             setRequestProperty("User-Agent", "VoFlow")
         }
-        connection.use {
-            if (it.responseCode !in 200..299) return@runCatching null
-            val json = it.inputStream.bufferedReader().use { reader -> reader.readText() }
+        try {
+            if (connection.responseCode !in 200..299) return@runCatching null
+            val json = connection.inputStream.bufferedReader().use { reader -> reader.readText() }
             val objectJson = JSONObject(json)
             GithubProfile(
                 name = objectJson.optString("name").takeIf { value -> value.isNotBlank() },
                 login = objectJson.optString("login", login),
                 avatarUrl = objectJson.optString("avatar_url").takeIf { value -> value.isNotBlank() }
             )
+        } finally {
+            connection.disconnect()
         }
     }.getOrNull()
 }
@@ -344,9 +346,11 @@ private suspend fun fetchGithubAvatar(url: String): Bitmap? = withContext(Dispat
             readTimeout = 5000
             setRequestProperty("User-Agent", "VoFlow")
         }
-        connection.use {
-            if (it.responseCode !in 200..299) return@runCatching null
-            it.inputStream.use(BitmapFactory::decodeStream)
+        try {
+            if (connection.responseCode !in 200..299) return@runCatching null
+            connection.inputStream.use(BitmapFactory::decodeStream)
+        } finally {
+            connection.disconnect()
         }
     }.getOrNull()
 }
