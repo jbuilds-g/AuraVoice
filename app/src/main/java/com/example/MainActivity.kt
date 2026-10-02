@@ -162,7 +162,7 @@ fun MissingApiKeyPromptCard(modifier: Modifier = Modifier) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(text = "Gemini API Key Required", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold), color = colorScheme.onErrorContainer)
                 Spacer(modifier = Modifier.height(2.dp))
-                Text(text = "AuraVoice requires a Google AI Studio API key to transcribe speech. Please enter and save your key below to activate dictation.", style = MaterialTheme.typography.bodySmall.copy(color = colorScheme.onErrorContainer.copy(alpha = 0.9f), lineHeight = 16.sp))
+                Text(text = "VoFlow requires a Google AI Studio API key to transcribe speech. Please enter and save your key below to activate dictation.", style = MaterialTheme.typography.bodySmall.copy(color = colorScheme.onErrorContainer.copy(alpha = 0.9f), lineHeight = 16.sp))
             }
         }
     }
