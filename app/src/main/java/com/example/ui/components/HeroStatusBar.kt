@@ -78,10 +78,10 @@ fun HeroStatusBar(
                             .border(1.dp, colorScheme.primary.copy(alpha = 0.3f), RoundedCornerShape(16.dp)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Rounded.GraphicEq, contentDescription = "AuraVoice", tint = colorScheme.onPrimaryContainer, modifier = Modifier.size(28.dp))
+                        Icon(Icons.Rounded.GraphicEq, contentDescription = "VoFlow", tint = colorScheme.onPrimaryContainer, modifier = Modifier.size(28.dp))
                     }
                     Column {
-                        Text("AuraVoice", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.ExtraBold, color = colorScheme.onSurface, letterSpacing = 0.3.sp))
+                        Text("VoFlow", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.ExtraBold, color = colorScheme.onSurface, letterSpacing = 0.3.sp))
                         Text("System-Wide AI Dictation", style = MaterialTheme.typography.bodySmall.copy(color = colorScheme.primary, fontWeight = FontWeight.Medium))
                     }
                 }
@@ -90,7 +90,7 @@ fun HeroStatusBar(
                     onClick = onOpenAbout,
                     modifier = Modifier.testTag("about_button")
                 ) {
-                    Icon(Icons.Rounded.Info, contentDescription = "About AuraVoice", tint = colorScheme.onSurfaceVariant)
+                    Icon(Icons.Rounded.Info, contentDescription = "About VoFlow", tint = colorScheme.onSurfaceVariant)
                 }
             }
 
