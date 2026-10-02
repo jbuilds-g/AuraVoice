@@ -52,6 +52,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.asImageBitmap
 import com.example.BuildConfig
@@ -124,14 +125,17 @@ fun AboutScreen(
             Column(modifier = Modifier.padding(20.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(
-                        modifier = Modifier.size(104.dp),
+                        modifier = Modifier
+                            .size(104.dp)
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(colorResource(R.color.voflow_icon_background)),
                         contentAlignment = Alignment.Center
                     ) {
                         Image(
                             painter = painterResource(R.drawable.ic_voflow_waveform),
                             contentDescription = "VoFlow waveform",
                             contentScale = ContentScale.Fit,
-                            modifier = Modifier.size(88.dp)
+                            modifier = Modifier.size(84.dp)
                         )
                     }
                     Spacer(modifier = Modifier.width(16.dp))
